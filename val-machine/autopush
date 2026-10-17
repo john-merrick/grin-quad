@@ -1,0 +1,50 @@
+#!/bin/bash
+# One-shot push helper.
+# Usage:
+#   ./autopush dev   — commit & push any changes to dev
+#   ./autopush main  — merge dev → main, push both
+
+set -e
+
+TARGET="${1:-}"
+
+if [[ -z "$TARGET" ]]; then
+  echo "Usage: ./autopush dev | ./autopush main"
+  exit 1
+fi
+
+commit_changes() {
+  if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+    echo "Staging and committing changes..."
+    git add -A
+    git commit -m "auto: $(date '+%Y-%m-%d %H:%M:%S')"
+  else
+    echo "Nothing to commit."
+  fi
+}
+
+if [[ "$TARGET" == "dev" ]]; then
+  git checkout dev
+  commit_changes
+  git push -u origin dev
+  echo "Pushed to dev."
+
+elif [[ "$TARGET" == "main" ]]; then
+  # Commit anything pending on dev first
+  git checkout dev
+  commit_changes
+  git push -u origin dev
+
+  # Merge dev into main and push
+  git checkout main
+  git merge --no-ff dev -m "merge: dev → main $(date '+%Y-%m-%d %H:%M:%S')"
+  git push origin main
+
+  # Return to dev
+  git checkout dev
+  echo "Merged dev → main and pushed both."
+
+else
+  echo "Unknown target '$TARGET'. Use 'dev' or 'main'."
+  exit 1
+fi

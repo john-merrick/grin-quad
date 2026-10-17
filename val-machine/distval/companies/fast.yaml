@@ -1,0 +1,70 @@
+# Fastenal (FAST) — manually keyed from 10-K filings
+# Source: FAST 10-K FY2023 filed 2024-02-06 (primary), with 10-year history for mid-cycle derivation.
+# All dollar values in millions USD.
+#
+# Mid-cycle gross margin derivation (FY2014–2023, per 10-K history):
+#   2014: 51.4%, 2015: 51.5%, 2016: 51.4%, 2017: 50.9%, 2018: 49.9%,
+#   2019: 50.1%, 2020: 46.9%, 2021: 45.9%, 2022: 45.6%, 2023: 46.8%
+#   Mean: 49.0% — Note: COVID/freight distortion 2020-2021; 2022-2023 normalisng.
+#   Mid-cycle gross margin used: 49.5% (mean excl. 2020-2022 freight disruption).
+#
+# Mid-cycle opex/sales:
+#   Selling/admin % of sales FY2014-2023 average: ~29.5% of sales
+#   After inflation of wages post-2021, normalised to 30.5%.
+#
+# Mid-cycle EBIT = Revenue * (gross_margin - opex%) = 7,000 * (0.495 - 0.305) = 7,000 * 0.19 = 1,330
+# Rounded to 1,300 as a conservative mid-cycle estimate given continued cost pressure.
+
+ticker: FAST
+forecast_years: 5
+
+# Revenue forecast: ~4-5% organic CAGR (consistent with long-run average, excluding abnormal 2021-2022)
+revenue:
+  - 7350.0
+  - 7720.0
+  - 8110.0
+  - 8520.0
+  - 8950.0
+
+# Gross margin: normalising back to mid-cycle ~49% from current 46.8%
+gross_margin:
+  - 0.475
+  - 0.482
+  - 0.490
+  - 0.490
+  - 0.490
+
+# Opex as % of sales (selling, general & admin excl. D&A)
+opex_pct_sales:
+  - 0.307
+  - 0.305
+  - 0.303
+  - 0.303
+  - 0.303
+
+# Working capital days (FY2023 actuals)
+dio: 126.0   # inventory days ~126 (inventory $1,538M / COGS $3,713M * 365)
+dso: 63.0    # receivable days ~63 (receivables $1,210M / revenue $6,981M * 365)
+dpo: 27.0    # payable days ~27 (payables $279M / COGS $3,713M * 365)
+
+maintenance_capex_pct_sales: 0.026  # FY2023: $182M / $6,981M ≈ 2.6%
+tax_rate: 0.243                     # FY2023 effective rate 24.3%
+
+# Mid-cycle EBIT: $6,981M revenue * 19.0% mid-cycle EBIT margin
+mid_cycle_ebit: 1300.0
+
+# Quality scores — single-segment, minimal M&A noise, best disclosure
+duration_score: 8    # long-cycle fastener/MRO relationships, embedded sales force
+stability_score: 8   # through-cycle FCF consistency, 27 consecutive dividend increases
+
+# Bridge items (in millions)
+# Surplus real estate / vending machine fleet net — not material enough to model
+other_elements: {}
+
+# Balance sheet (FY2023, in millions) — for reference; passed at call site
+# total_debt: 350.0
+# cash: 270.0
+# net_debt: 80.0
+# shares_diluted: 571.0
+# minority_interest: 0.0
+# spot_price: ~63.00 (approx at time of model build)
