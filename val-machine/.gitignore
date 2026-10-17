@@ -6,3 +6,4 @@ snapshots/
 .pytest_cache/
 .env
 .coverage
+.claude/settings.local.json
