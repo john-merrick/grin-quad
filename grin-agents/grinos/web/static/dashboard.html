@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="grin-token" content="__GRIN_TOKEN__">
+<title>Grin OS</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+  --accent: #2f5bd3; --ok: #1f7a4d; --bad: #b3261e; --warn: #9a6700; --chip: #eef0f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141413; --panel: #1d1d1b; --text: #ecebe6; --muted: #9b9a93; --line: #33332f;
+          --accent: #7aa0ff; --ok: #5fc48e; --bad: #f08a80; --warn: #e3b341; --chip: #26272c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px;
+         border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+header a { color: var(--accent); text-decoration: none; margin-left: auto; }
+.badge { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+.badge.ok { color: var(--ok); } .badge.bad { color: var(--bad); }
+nav { display: flex; gap: 4px; padding: 8px 16px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+nav button { border: 0; background: none; color: var(--muted); padding: 7px 11px; border-radius: 8px;
+             font: inherit; cursor: pointer; white-space: nowrap; }
+nav button.on { background: var(--chip); color: var(--text); font-weight: 600; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.muted { color: var(--muted); font-size: 13px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+button.act { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 6px 12px;
+             border-radius: 8px; font: inherit; cursor: pointer; }
+button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.act.danger { color: var(--bad); }
+input[type=text], textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+                             border-radius: 8px; padding: 8px 10px; width: 100%; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--chip); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.status { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--chip); }
+.s-pending { color: var(--warn); } .s-approved, .s-published { color: var(--ok); }
+.s-rejected, .s-failed { color: var(--bad); }
+.msg { margin: 8px 0; } .msg .who { font-weight: 600; font-size: 13px; }
+.msg.me .who { color: var(--muted); }
+#toast { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 520px; margin: auto; background: var(--text);
+         color: var(--bg); padding: 10px 14px; border-radius: 10px; display: none; z-index: 5; }
+.empty { color: var(--muted); padding: 20px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Grin OS</h1>
+  <span id="audit" class="badge">checking ledger…</span>
+  <a href="/room">Voice room →</a>
+</header>
+<nav id="tabs"></nav>
+<main id="panel"></main>
+<div id="toast"></div>
+<script>
+const TOKEN = document.querySelector('meta[name="grin-token"]').content;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {
+    method: 'POST', headers: {'Content-Type': 'application/json', 'X-Grin-Token': TOKEN}, body: JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({error: r.statusText}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// Builds DOM from data without ever parsing it as HTML.
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined) n.append(k instanceof Node ? k : String(k));
+  return n;
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 4000);
+}
+
+function pct(v) { return v === null || v === undefined ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%'; }
+function fmt(v) { return Array.isArray(v) ? '[' + v.join(', ') + ']' : String(v); }
+
+function table(headers, rows, onclick) {
+  return el('div', {class: 'tablewrap'}, el('table', {},
+    el('thead', {}, el('tr', {}, headers.map(h => el('th', {}, h)))),
+    el('tbody', {}, rows.map((r, i) => el('tr', onclick ? {class: 'click', onclick: () => onclick(i)} : {},
+      r.map(c => el('td', {}, c)))))));
+}
+
+async function refreshAudit() {
+  const b = document.getElementById('audit');
+  try {
+    const a = await api('/api/audit');
+    b.textContent = a.ok ? `Ledger intact · ${a.n} entries` : `LEDGER BROKEN · ${a.problems.length} problem(s)`;
+    b.className = 'badge ' + (a.ok ? 'ok' : 'bad');
+    if (!a.ok) b.title = a.problems.join('\n');
+  } catch (e) { b.textContent = 'ledger: ' + e.message; b.className = 'badge bad'; }
+}
+
+async function act(path, body, done) {
+  try { await api(path, body); toast('Recorded in the ledger.'); refreshAudit(); done && done(); }
+  catch (e) { toast('Refused: ' + e.message); }
+}
+
+function askNote(label) {
+  const n = prompt(label + ' — note (required, recorded in the ledger):');
+  return n && n.trim() ? n.trim() : null;
+}
+
+const TABS = {
+  async Pending(p) {
+    const d = await api('/api/pending');
+    p.append(el('h2', {}, 'Proposals awaiting you'));
+    if (!d.proposals.length) p.append(el('div', {class: 'empty'}, 'No proposals pending.'));
+    for (const x of d.proposals) {
+      p.append(el('div', {class: 'card'},
+        el('h3', {}, `${x.company} · ${x.field}: ${fmt(x.old_value)} → ${fmt(x.new_value)}`),
+        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.nature} · EV ${pct(x.ev_change_pct)} · cites ${x.cites.join(', ')}`),
+        el('p', {}, x.rationale),
+        el('div', {class: 'row'},
+          el('button', {class: 'act primary', onclick: () => { const n = askNote('Approve ' + x.proposal_id);
+            if (n) act('/api/approve', {proposal_id: x.proposal_id, note: n}, () => show('Pending')); }}, 'Approve'),
+          el('button', {class: 'act danger', onclick: () => { const n = askNote('Reject ' + x.proposal_id);
+            if (n) act('/api/reject', {proposal_id: x.proposal_id, note: n}, () => show('Pending')); }}, 'Reject'))));
+    }
+    p.append(el('h2', {}, 'Claims needing review'));
+    if (!d.claims.length) p.append(el('div', {class: 'empty'}, 'No claims need review.'));
+    for (const c of d.claims) {
+      p.append(el('div', {class: 'card'},
+        el('h3', {}, c.statement), el('div', {class: 'muted mono'}, c.claim_id + ' · ' + c.company),
+        el('p', {}, '“' + c.quote + '”'), el('div', {class: 'muted'}, c.reasons.join(' · ')),
+        el('div', {class: 'row'},
+          el('button', {class: 'act primary', onclick: () => { const n = askNote('Mark verified');
+            if (n) act('/api/resolve', {claim_id: c.claim_id, verdict: 'verified', note: n}, () => show('Pending')); }}, 'Verified'),
+          el('button', {class: 'act danger', onclick: () => { const n = askNote('Mark rejected');
+            if (n) act('/api/resolve', {claim_id: c.claim_id, verdict: 'rejected', note: n}, () => show('Pending')); }}, 'Rejected'))));
+    }
+  },
+  async Runs(p) {
+    const runs = (await api('/api/runs')).reverse();
+    if (!runs.length) return p.append(el('div', {class: 'empty'}, 'No runs yet. Try: grinos ingest …'));
+    const detail = el('div', {});
+    p.append(table(['when', 'run', 'source', 'claims', 'verified', 'rejected', 'review', 'discarded'],
+      runs.map(r => [r.ts, el('span', {class: 'mono'}, r.run_id), r.source || '—', r.claims, r.verified,
+                     r.rejected, r.needs_human, r.discarded]),
+      async i => { detail.replaceChildren(el('h2', {}, runs[i].run_id), stepsTable(await api('/api/run/' + encodeURIComponent(runs[i].run_id)))); detail.scrollIntoView(); }));
+    p.append(detail);
+  },
+  async Trail(p) {
+    const inp = el('input', {type: 'text', placeholder: 'claim id, e.g. c_b25b2c7a4cd4'});
+    const out = el('div', {});
+    const go = async () => { try { out.replaceChildren(stepsTable(await api('/api/trail/' + inp.value.trim()))); }
+                             catch (e) { out.replaceChildren(el('div', {class: 'empty'}, e.message)); } };
+    inp.addEventListener('keydown', e => e.key === 'Enter' && go());
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'Claim trail: source bytes → decision → rules → verdict'),
+             el('div', {class: 'row'}, inp, el('button', {class: 'act primary', onclick: go}, 'Show'))), out);
+  },
+  async Proposals(p) {
+    const ps = (await api('/api/proposals')).reverse();
+    if (!ps.length) return p.append(el('div', {class: 'empty'}, 'No proposals yet. Try /analyse TICKER in the desk.'));
+    for (const x of ps) {
+      const cls = 's-' + x.status.split(' ')[0];
+      p.append(el('div', {class: 'card'},
+        el('div', {class: 'row'}, el('span', {class: 'status ' + cls}, x.status),
+           el('strong', {}, `${x.company} · ${x.field}: ${fmt(x.old_value)} → ${fmt(x.new_value)}`)),
+        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.ts} · EV ${pct(x.ev_change_pct)} · cites ${x.cites.join(', ')}`),
+        el('p', {}, x.rationale),
+        x.problems.length ? el('div', {class: 'muted'}, 'Problems: ' + x.problems.join('; ')) : null,
+        x.status === 'approved' ? el('div', {class: 'row'}, el('button', {class: 'act primary', onclick: async () => {
+          try { const r = await api('/api/publish', {proposal_id: x.proposal_id});
+                toast(r.pushed ? 'Published to Notion.' : 'Prepared in outbox. ' + r.message); show('Proposals'); }
+          catch (e) { toast('Not published: ' + e.message); } }}, 'Prepare Notion model sync')) : null));
+    }
+  },
+  async Valuations(p) {
+    const runs = (await api('/api/valuations')).reverse();
+    if (!runs.length) return p.append(el('div', {class: 'empty'},
+      'No valuations yet. Run: grinos value --assumptions examples/valuation/acme.yaml --offline examples/valuation/sec'));
+    const detail = el('div', {});
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'FCFF valuations (analysis only; no trades, no buy/sell calls)'),
+      table(['run', 'ticker', 'date', 'price', 'status', 'bear', 'base', 'bull'],
+        runs.map(r => [el('span', {class: 'mono'}, r.run_id), r.ticker, r.valuation_date, r.price,
+                       el('span', {class: 'status s-' + (r.status === 'complete' ? 'approved' : r.status === 'blocked' ? 'pending' : 'failed')},
+                          `${r.status} · ${r.step || ''}`),
+                       ...['bear', 'base', 'bull'].map(k => r.value_per_share ? '$' + Number(r.value_per_share[k]).toFixed(2) : '—')]),
+        async i => { detail.replaceChildren(await valuationDetail(runs[i].run_id)); detail.scrollIntoView(); })));
+    p.append(detail);
+  },
+  async Evals(p) {
+    for (const e of await api('/api/evals')) {
+      p.append(el('div', {class: 'card'}, el('h3', {}, e.agent),
+        e.header.length ? table(e.header, e.rows) : el('pre', {}, e.markdown)));
+    }
+  },
+  async Desk(p) {
+    const log = el('div', {});
+    const inp = el('input', {type: 'text', placeholder: 'Ask the desk, or /help. @analyst @verifier @decision @auditor @extractor'});
+    const conf = el('input', {type: 'checkbox', id: 'conf'});
+    const send = async () => {
+      const text = inp.value.trim(); if (!text) return; inp.value = '';
+      log.append(el('div', {class: 'msg me'}, el('div', {class: 'who'}, 'you'), el('div', {}, text)));
+      try {
+        const r = await api('/api/desk', {text, conference: conf.checked});
+        for (const x of r.replies) log.append(el('div', {class: 'msg'}, el('div', {class: 'who'}, x.agent),
+          el('div', {style: 'white-space: pre-wrap'}, x.text),
+          x.cites && x.cites.length ? el('div', {class: 'muted mono'}, 'cites ' + x.cites.join(', ')) : null));
+      } catch (e) { log.append(el('div', {class: 'msg'}, el('div', {class: 'who'}, 'error'), e.message)); }
+      refreshAudit(); inp.focus();
+    };
+    inp.addEventListener('keydown', e => e.key === 'Enter' && send());
+    p.append(el('div', {class: 'card'}, log,
+      el('div', {class: 'row'}, inp, el('button', {class: 'act primary', onclick: send}, 'Send')),
+      el('div', {class: 'row muted'}, conf, el('label', {for: 'conf'}, 'Conference (several agents answer in turn)'))));
+    inp.focus();
+  },
+};
+
+async function valuationDetail(runId) {
+  const v = await api('/api/valuation/' + encodeURIComponent(runId));
+  const box = el('div', {class: 'card'}, el('h3', {}, runId),
+    el('div', {class: 'muted'}, `${v.status ? v.status.status + ' at ' + v.status.step : ''} · price ${v.request.price} · `
+      + `valuation date ${v.request.valuation_date}` + (v.request.supersedes ? ` · supersedes ${v.request.supersedes}` : '')));
+  const step = v.status && v.steps[v.status.step];
+  for (const b of (step && step.blocking) || []) {
+    const note = el('input', {type: 'text', placeholder: 'note (required)'});
+    const decide = d => async () => {
+      try { const r = await api('/api/valuation/decide', {run_id: runId, target: b.id, decision: d, note: note.value});
+            toast(`${b.id} ${d}: run is ${r.status} at ${r.step}`); detail_reload(); }
+      catch (e) { toast(e.message); } };
+    const choices = b.kind === 'adjustment' ? ['approve', 'reject'] : ['accept', 'reject'];
+    box.append(el('div', {class: 'card'}, el('div', {class: 'row'}, el('span', {class: 'status s-pending'}, b.kind),
+        el('strong', {}, `${b.item || ''} ${b.period || ''}`)), el('p', {}, b.detail), note,
+      el('div', {class: 'row'}, ...choices.map(d => el('button', {class: 'act' + (d === choices[0] ? ' primary' : ' danger'),
+                                                                  onclick: decide(d)}, d)))));
+  }
+  const detail_reload = async () => box.replaceWith(await valuationDetail(runId));
+  if (v.memo) box.append(el('pre', {style: 'white-space: pre-wrap; font-size: 12px'}, v.memo));
+  return box;
+}
+
+function stepsTable(entries) {
+  if (!entries.length) return el('div', {class: 'empty'}, 'Nothing found.');
+  return table(['#', 'stage', 'actor', 'detail'],
+    entries.map(e => [e.seq, e.stage, el('span', {class: 'mono'}, e.actor), e.detail]));
+}
+
+async function show(name) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  const p = document.getElementById('panel');
+  p.replaceChildren(el('div', {class: 'empty'}, 'Loading…'));
+  const frag = el('div', {});
+  try { await TABS[name](frag); p.replaceChildren(frag); }
+  catch (e) { p.replaceChildren(el('div', {class: 'empty'}, 'Error: ' + e.message)); }
+  try { localStorage.setItem('grin-tab', name); } catch (_) {}
+}
+
+const nav = document.getElementById('tabs');
+for (const name of Object.keys(TABS)) nav.append(el('button', {'data-tab': name, onclick: () => show(name)}, name));
+let start = 'Pending';
+try { start = localStorage.getItem('grin-tab') || start; } catch (_) {}
+show(TABS[start] ? start : 'Pending');
+refreshAudit();
+</script>
+</body>
+</html>

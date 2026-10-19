@@ -1,0 +1,6 @@
+evals/*/results/
+__pycache__/
+.pytest_cache/
+var/
+var.*/
+.env

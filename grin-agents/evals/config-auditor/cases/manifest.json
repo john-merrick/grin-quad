@@ -1,0 +1,161 @@
+[
+  {
+    "id": "clean_base",
+    "kind": "clean",
+    "file": "clean_base/acme.yaml",
+    "planted_fields": [],
+    "note": "no defect"
+  },
+  {
+    "id": "clean_justified_deviation",
+    "kind": "clean",
+    "file": "clean_justified_deviation/acme.yaml",
+    "planted_fields": [],
+    "note": "deviation from the average, with an explicit reason \u2014 must not be flagged"
+  },
+  {
+    "id": "clean_flag_handled",
+    "kind": "clean",
+    "file": "clean_flag_handled/acme.yaml",
+    "planted_fields": [],
+    "note": "a raised flag that the forecast already handles \u2014 mentioning a flag is not a defect"
+  },
+  {
+    "id": "tool_gm_percent_typo",
+    "kind": "tool",
+    "file": "tool_gm_percent_typo/acme.yaml",
+    "planted_fields": [
+      "gross_margin"
+    ],
+    "note": "year-3 gross margin written as 30.0 instead of 0.300"
+  },
+  {
+    "id": "tool_revenue_unit_error",
+    "kind": "tool",
+    "file": "tool_revenue_unit_error/acme.yaml",
+    "planted_fields": [
+      "revenue"
+    ],
+    "note": "year-4 revenue off by 10x"
+  },
+  {
+    "id": "tool_opex_exceeds_gm",
+    "kind": "tool",
+    "file": "tool_opex_exceeds_gm/acme.yaml",
+    "planted_fields": [
+      "opex_pct_sales",
+      "gross_margin"
+    ],
+    "note": "year-1 opex above gross margin \u2192 negative EBIT"
+  },
+  {
+    "id": "tool_list_length",
+    "kind": "tool",
+    "file": "tool_list_length/acme.yaml",
+    "planted_fields": [
+      "revenue"
+    ],
+    "note": "revenue has 4 entries for 5 forecast years"
+  },
+  {
+    "id": "tool_score_out_of_range",
+    "kind": "tool",
+    "file": "tool_score_out_of_range/acme.yaml",
+    "planted_fields": [
+      "duration_score"
+    ],
+    "note": "duration_score 11 is outside 1\u201310"
+  },
+  {
+    "id": "tool_ticker_mismatch",
+    "kind": "tool",
+    "file": "tool_ticker_mismatch/acme.yaml",
+    "planted_fields": [
+      "ticker"
+    ],
+    "note": "ticker field disagrees with filename"
+  },
+  {
+    "id": "tool_forbidden_macro_key",
+    "kind": "tool",
+    "file": "tool_forbidden_macro_key/acme.yaml",
+    "planted_fields": [
+      "discount_rate"
+    ],
+    "note": "company-specific discount rate (macro lives in macro.py; loader silently drops it)"
+  },
+  {
+    "id": "judg_dio_comment_mismatch",
+    "kind": "judgment",
+    "file": "judg_dio_comment_mismatch/acme.yaml",
+    "planted_fields": [
+      "dio"
+    ],
+    "note": "dio 95 while its own comment says 10-yr avg 60.0"
+  },
+  {
+    "id": "judg_mid_cycle_arith",
+    "kind": "judgment",
+    "file": "judg_mid_cycle_arith/acme.yaml",
+    "planted_fields": [
+      "mid_cycle_ebit"
+    ],
+    "note": "mid_cycle_ebit 132 vs header derivation of 112.6 (within tool tolerance)"
+  },
+  {
+    "id": "judg_tax_comment_mismatch",
+    "kind": "judgment",
+    "file": "judg_tax_comment_mismatch/acme.yaml",
+    "planted_fields": [
+      "tax_rate"
+    ],
+    "note": "tax_rate 35% vs comment FY2025 effective 25.0%"
+  },
+  {
+    "id": "judg_wc_cogs_basis",
+    "kind": "judgment",
+    "file": "judg_wc_cogs_basis/acme.yaml",
+    "planted_fields": [
+      "dio"
+    ],
+    "note": "DIO on COGS basis while engine uses revenue basis"
+  },
+  {
+    "id": "judg_stability_unjustified",
+    "kind": "judgment",
+    "file": "judg_stability_unjustified/acme.yaml",
+    "planted_fields": [
+      "stability_score"
+    ],
+    "note": "max stability score while comment describes an 8% drawdown and average cyclicality"
+  },
+  {
+    "id": "real_pool",
+    "kind": "real",
+    "file": "real_pool/pool.yaml",
+    "planted_fields": [
+      "dio",
+      "dso"
+    ],
+    "note": "dio 140 vs comment 10-yr avg 83.9; dso 27.6 vs comment 'corrected' 9.3"
+  },
+  {
+    "id": "real_fast",
+    "kind": "real",
+    "file": "real_fast/fast.yaml",
+    "planted_fields": [
+      "dio",
+      "dpo"
+    ],
+    "note": "DIO and DPO computed on COGS while engine is revenue-based"
+  },
+  {
+    "id": "real_gww",
+    "kind": "real",
+    "file": "real_gww/gww.yaml",
+    "planted_fields": [
+      "mid_cycle_ebit"
+    ],
+    "note": "mid-cycle EBIT 1,700 derived from ~14,000 revenue; forecast revenue averages ~20,000"
+  }
+]

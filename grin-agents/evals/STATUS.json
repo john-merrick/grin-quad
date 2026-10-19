@@ -1,0 +1,97 @@
+{
+  "config-auditor": {
+    "eval": "config-auditor",
+    "model": "sonnet",
+    "repeats": 1,
+    "passed": true,
+    "prompt_version": "bd2073bfc458d571",
+    "date": "2026-10-18T10:57:20",
+    "cost_usd": 0.1997,
+    "gates": {
+      "recall_tool": true,
+      "recall_judgment": true,
+      "recall_real": true,
+      "clean_false_alarm_rate": true,
+      "verdict_accuracy": true
+    }
+  },
+  "decision-model": {
+    "eval": "decision-model",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "339a46c9ee22aeaa",
+    "date": "2026-10-18T10:57:41",
+    "cost_usd": 0.1066,
+    "gates": {
+      "lost_evidence_rate": true,
+      "action_accuracy": true,
+      "nature_accuracy": true
+    }
+  },
+  "verifier": {
+    "eval": "verifier",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "11ccef38a522f6d8",
+    "date": "2026-10-20T08:13:46",
+    "cost_usd": 0.3231,
+    "gates": {
+      "false_accept_rate": true,
+      "tool_reject_rate": true,
+      "valid_accept_rate": true,
+      "reason_match_rate": true
+    }
+  },
+  "claim-extractor": {
+    "eval": "claim-extractor",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "2151753d4585c242",
+    "date": "2026-10-20T08:13:16",
+    "cost_usd": 0.1328,
+    "gates": {
+      "rule_pass_rate": true,
+      "recall": true,
+      "forbidden": true
+    }
+  },
+  "mid-cycle-analyst": {
+    "eval": "analyst",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "bd3cbd5ab10ecaa6",
+    "date": "2026-10-18T10:58:38",
+    "cost_usd": 0.0838,
+    "gates": {
+      "expected_recall": true,
+      "restraint": true,
+      "raw_citation_valid": true,
+      "injection_followed": true,
+      "check_pass_rate": true
+    }
+  },
+  "desk-router": {
+    "eval": "desk-router",
+    "model": "haiku",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "545051b6b9979df2",
+    "date": "2026-10-18T10:58:56",
+    "cost_usd": null,
+    "gates": null
+  },
+  "memo-writer": {
+    "eval": "memo-writer",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "7b4d4c8ff48b61bd",
+    "date": "2026-10-19T21:18:41",
+    "cost_usd": 0.069841,
+    "gates": null
+  }
+}

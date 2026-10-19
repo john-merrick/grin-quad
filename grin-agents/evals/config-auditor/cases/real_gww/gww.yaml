@@ -1,0 +1,105 @@
+# W.W. Grainger, Inc. (GWW) — valuation config
+# Source: EDGAR 10-K filings FY2016–2025 via distval ingest/normalise.
+# As-of: 2026-09-20 using FY2025 10-K (filed 2026-02-19, period 2025-12-31).
+# All dollar values in millions USD.
+#
+# Business: Largest North American industrial MRO distributor. Two segments:
+#   High-Touch Solutions NA — large B2B accounts, ~$13.9B revenue (FY2025)
+#   Endless Assortment (Zoro US + MonotaRO Japan) — digital/SMB, ~$3.6B
+# ~70% of B2B revenue is maintenance/repair/operations spend (non-discretionary).
+#
+# Normalisation (FY2016–2025, 10 fiscal years):
+#   Mid-cycle gross margin: 38.5%
+#   Mid-cycle opex % (SG&A + D&A): 26.3% → declining trend to ~25.2% in FY2025
+#   Implied EBIT margin: 12.2%
+#   Avg DIO / DSO / DPO: 51.1 / 47.0 / 22.7 days
+#
+# Flag raised — capex_exceeds_da:
+#   GWW has run 6+ consecutive years of capex > D&A as it builds out distribution
+#   infrastructure and Endless Assortment fulfilment. FY2025: capex $684M vs D&A $254M.
+#   maintenance_capex_pct_sales is anchored to D&A rate (~1.4%), not total capex (~3.8%).
+#   The expansion capex is funded from healthy FCF; no concern for the terminal multiple,
+#   but the analyst should note this flag means carry-forward FCF is lower than NOPAT
+#   during the build-out phase.
+#
+# Mid-cycle EBIT derivation:
+#   10-year average EBIT: $1,707M
+#   5-year average (FY2021–2025): $2,292M
+#   Mid-cycle revenue (range midpoint FY2016–2025): ~$14,000M
+#   Mid-cycle EBIT = $14,000M × 12.2% ≈ $1,700M
+#   Used $1,700M — conservative relative to recent power; appropriate because
+#   FY2022–2025 margins benefited from scale & pricing tailwinds that may partially mean-revert.
+
+ticker: GWW
+forecast_years: 5
+
+# Revenue forecast: FY2026–2030 in $M
+# Base: FY2025 = $17,942M. Growth rate decelerating from ~5% recent to ~3-4%
+# as High-Touch Solutions matures and Endless Assortment annualises.
+# Industrial MRO market is resilient (non-discretionary) but grows roughly with IP growth.
+revenue:
+  - 18600.0
+  - 19300.0
+  - 20000.0
+  - 20700.0
+  - 21400.0
+
+# Gross margin: 10-year mean 38.5%; recent FY2023–2025 = 39.1–39.4%.
+# Using 38.8% as starting point, slight compression as mix shifts.
+gross_margin:
+  - 0.388
+  - 0.388
+  - 0.389
+  - 0.390
+  - 0.390
+
+# Opex % of sales (SG&A + D&A — engine treats D&A = maintenance capex, so these cancel).
+# FY2025 actual = 25.2%; mid-cycle normalise = 26.3%.
+# Forecast: mild improvement as fixed costs leveraged on growing revenue base.
+opex_pct_sales:
+  - 0.252
+  - 0.250
+  - 0.249
+  - 0.248
+  - 0.247
+
+# Working capital days — computed as days of revenue.
+# FY2025 actuals: inventory $2,394M, receivables $2,329M, payables $963M; revenue $17,942M.
+dio: 50.6   # inventory days: $2,394M / $17,942M * 365 ≈ 48.7; using 10-yr avg 51.1 → 50.6
+dso: 47.4   # receivable days: $2,329M / $17,942M * 365 ≈ 47.4
+dpo: 19.6   # payable days: $963M / $17,942M * 365 ≈ 19.6 (FY2025 actual)
+
+# Maintenance capex anchored to D&A rate (~1.4% of revenue), NOT total capex (~3.8%).
+# The excess expansion capex is a growth reinvestment decision, not a terminal drag.
+maintenance_capex_pct_sales: 0.015
+
+# Effective tax rate: FY2025 = 25.6%; FY2024 = 23.0%; FY2023 = 23.9%.
+# Using 25% as a normalised through-cycle rate.
+tax_rate: 0.25
+
+# Mid-cycle EBIT: conservative 10-yr range midpoint derivation → $1,700M
+mid_cycle_ebit: 1700.0
+
+# Quality scores
+# Duration — how durable are the competitive advantages? (1–10)
+#   GWW holds the broadest SKU assortment in NA MRO (~1.5M+ items via Endless Assortment).
+#   Enterprise B2B relationships embedded in procurement/ERP systems (high switching cost).
+#   MonotaRO is the dominant Japanese MRO e-commerce platform.
+#   Facing Amazon Business competition but has held share through superior service/breadth.
+duration_score: 7
+
+# Stability — through-cycle FCF consistency? (1–10)
+#   MRO spend is maintenance-driven: factories must run regardless of the cycle.
+#   FY2020 (COVID): revenue flat, not down. FCF remained strong.
+#   FY2016 saw restructuring but core earnings held.
+stability_score: 8
+
+# Bridge items — no material surplus assets or non-operating liabilities to add.
+other_elements: {}
+
+# Balance sheet (FY2025, in millions) — pass at CLI call site:
+# total_debt:        2,488  (LTD current $126M + LTD non-current $2,362M)
+# cash:                585
+# net_debt:          1,903
+# minority_interest:   405  (GWW's ~53% stake in MonotaRO creates meaningful NCI)
+# shares_diluted:       48  (weighted avg diluted shares FY2025)

@@ -1,0 +1,61 @@
+# Valuation assumptions for the offline ACME example (synthetic company, see grinos/tests/sec_fixture.py).
+# Real assumption files are private research: keep them in var/assumptions/<ticker>.yaml (gitignored).
+#
+#   grinos value --assumptions examples/valuation/acme.yaml --offline examples/valuation/sec
+#
+# Rates are fractions. A scalar applies to all five forecast years; a list gives each year.
+# Keywords, resolved from the filings with fact ids (never invented when a fact is missing):
+#   tax_rate: reported               income tax / pretax income, latest fiscal year
+#   net_capex_pct_revenue: reported  (capex − D&A) / revenue
+#   nwc_pct_revenue: reported        (receivables + inventory − payables) / revenue
+#   ebit_margin: normalised          (operating income + approved adjustments) / revenue
+
+ticker: ACME
+valuation_date: 2026-06-30
+price: 60.00          # market price per share on the valuation date, supplied by the analyst
+currency: USD
+
+defaults:             # shared by every scenario unless it overrides a key
+  tax_rate: reported
+  net_capex_pct_revenue: reported
+  nwc_pct_revenue: reported
+
+wacc:                 # build-up; market-value weights (price × diluted shares, book debt)
+  risk_free: 0.04
+  equity_risk_premium: 0.05
+  beta: 1.0
+  pre_tax_cost_of_debt: 0.06
+
+scenarios:
+  bear:
+    revenue_growth: [0.00, 0.01, 0.01, 0.02, 0.02]
+    ebit_margin: 0.085
+    terminal_growth: 0.020
+    wacc_inputs: {beta: 1.2}
+  base:
+    revenue_growth: 0.04
+    ebit_margin: normalised
+    terminal_growth: 0.025
+  bull:
+    revenue_growth: [0.07, 0.07, 0.06, 0.06, 0.05]
+    ebit_margin: [0.110, 0.112, 0.114, 0.116, 0.118]
+    terminal_growth: 0.030
+    wacc_inputs: {beta: 0.9}
+
+bridge:
+  include_operating_leases: false   # lease cost sits inside EBIT, so leases are not netted as debt
+
+# Proposed adjustments need an analyst's approval before they touch normalised figures.
+# Rule-proposed ones (impairments, restructuring in XBRL) are added automatically.
+adjustments: []
+
+narrative:            # each item needs a source: a verified claim id (c_…), a fact id (x_…) or a URL
+  drivers:
+    - text: Maintenance demand from the installed base makes most revenue recurring.
+      source: https://www.sec.gov/Archives/edgar/data/1234567/000123456726000010/0001234567-26-000010-index.html
+  risks:
+    - text: Gross margin depends on supplier pricing that ACME does not control.
+      source: https://www.sec.gov/Archives/edgar/data/1234567/000123456726000010/0001234567-26-000010-index.html
+  disconfirming:
+    - text: FY2024 revenue was restated upward; if more restatements follow, the base year is weaker than reported.
+      source: https://www.sec.gov/Archives/edgar/data/1234567/000123456726000010/0001234567-26-000010-index.html
