@@ -20,7 +20,7 @@ import os
 import secrets
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from grinos.schemas import Actor, canonical, sha256
@@ -34,7 +34,7 @@ class LedgerCorrupt(RuntimeError):
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def entry_hash(entry: dict) -> str:
@@ -152,7 +152,7 @@ class Ledger:
                         self.get_blob(ref[5:])
                     except (FileNotFoundError, LedgerCorrupt) as exc:
                         problems.append(f"seq {e.get('seq')}: {ref[:17]}… {exc}")
-            prev, expected_seq = e.get("hash"), expected_seq + 1
+            prev, expected_seq = str(e.get("hash", "")), expected_seq + 1
         if expected_seq:
             try:
                 head = json.loads(self.head.read_text())
@@ -174,7 +174,10 @@ class Ledger:
         problems = self.audit()
         if problems:
             raise LedgerCorrupt("refusing to serve evidence from a broken ledger: " + "; ".join(problems[:3]))
-        claims, routed, verdict, human = {}, {}, {}, {}
+        claims: dict[str, dict] = {}
+        routed: dict[str, bool] = {}
+        verdict: dict[str, str] = {}
+        human: dict[str, str] = {}
         for e in self.entries():
             p = e["payload"]
             if e["stage"] == "claim":

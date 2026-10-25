@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from config_facts import config_facts
 
 BASE = {

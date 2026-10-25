@@ -4,6 +4,7 @@ it sits from the current company config. Mirrors the valuation process:
 value = mid-cycle EBIT × multiple(duration, stability), plus FCF path and the equity bridge.
 """
 import statistics
+from typing import Any
 
 # metric -> (lever, company-config field it speaks to)
 LEVERS: dict[str, tuple[str | None, str | None]] = {
@@ -50,7 +51,7 @@ def config_value(config: dict, metric: str) -> float | None:
 
 def lever_facts(claim: dict, config: dict | None) -> dict:
     lever, field = LEVERS.get(claim["metric"], (None, None))
-    facts = {"lever": lever, "config_field": field, "config_value": None, "deviation": None}
+    facts: dict[str, Any] = {"lever": lever, "config_field": field, "config_value": None, "deviation": None}
     if config and claim.get("value") is not None and not claim["metric"].startswith("guidance_"):
         cv = config_value(config, claim["metric"])
         if cv:

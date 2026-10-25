@@ -16,7 +16,8 @@ import yaml
 
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
-from grinos import narrative, sec, valuation as V  # noqa: E402
+from grinos import narrative, sec  # noqa: E402
+from grinos import valuation as V  # noqa: E402
 from grinos.ledger import Ledger  # noqa: E402
 from grinos.tests import sec_fixture as F  # noqa: E402
 

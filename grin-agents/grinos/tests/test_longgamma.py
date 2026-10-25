@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grinos import analyst, decide, longgamma as LG, sec, valuation as V, verify
+from grinos import analyst, decide, sec, verify
+from grinos import longgamma as LG
+from grinos import valuation as V
 from grinos.ledger import Ledger
 from grinos.notion import NotPublishable
 from grinos.pipeline import ingest

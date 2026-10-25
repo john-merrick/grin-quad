@@ -177,7 +177,8 @@ def test_room_turn_without_tts_returns_text(app, monkeypatch):
 
 
 def test_valuation_endpoints_read_without_advancing_and_decide_with_the_token(app):
-    from grinos import sec, valuation as V
+    from grinos import sec
+    from grinos import valuation as V
     from grinos.tests import sec_fixture as F
     raw = yaml.safe_load((ROOT / "examples/valuation/acme.yaml").read_text())
     top = {k: raw.pop(k) for k in ("ticker", "valuation_date", "price", "currency")}

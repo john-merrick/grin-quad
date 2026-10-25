@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE))
 
 from cases import CASES  # noqa: E402
+
 from grinos import narrative  # noqa: E402
 from grinos.llm import call_agent  # noqa: E402
 
@@ -32,7 +33,7 @@ NAIVE = "You are an equity analyst. Summarise this valuation for an investment c
 
 def run_case(case: dict, system: str, model: str) -> dict:
     sh, feedback, drafts = case["sheet"], None, []
-    for attempt in range(narrative.MAX_ATTEMPTS):
+    for _ in range(narrative.MAX_ATTEMPTS):
         draft, meta = call_agent("memo-writer", narrative.message(sh, feedback), narrative.SCHEMA, model=model,
                                  system_prompt=NAIVE if system == "naive" else None)
         feedback = narrative.check(sh, draft)

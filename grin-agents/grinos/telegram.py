@@ -19,15 +19,15 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from pathlib import Path
-
-from grinos.env import secret
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 import yaml
 
 from grinos import voice
 from grinos.desk import COMPANIES_DIR, Desk
+from grinos.env import secret
 from grinos.ledger import Ledger
 from grinos.pipeline import ingest
 from grinos.schemas import Actor
@@ -74,7 +74,7 @@ class TelegramAPI:
     def __init__(self, token: str):
         self.token = token
 
-    def _call(self, method: str, params: dict | None = None, timeout: float = 60) -> dict:
+    def _call(self, method: str, params: dict | None = None, timeout: float = 60) -> Any:
         req = urllib.request.Request(f"{API}/bot{self.token}/{method}",
                                      data=json.dumps(params or {}).encode(),
                                      headers={"Content-Type": "application/json"})
@@ -127,7 +127,7 @@ class Bot:
         self.ledger, self.api, self.desk, self.allowed = ledger, api, desk, allowed_ids
         self.bot_username, self.bot_id, self.model, self.background = bot_username.lower(), bot_id, model, background
         self.offset_path = ledger.root / "telegram_offset"
-        self._refused: dict[int, float] = {}   # uid → last time a refusal was logged
+        self._refused: dict[int | None, float] = {}   # uid → last time a refusal was logged
 
     # --- offset ---------------------------------------------------------------
 
@@ -149,6 +149,8 @@ class Bot:
         user = msg.get("from") or {}
         chat = msg.get("chat") or {}
         uid, chat_id = user.get("id"), chat.get("id")
+        if chat_id is None:                 # nothing to answer or attribute
+            return
         if uid not in self.allowed:
             # Logged at most once per sender per hour, so spam can't grow the ledger.
             now = time.monotonic()
@@ -196,7 +198,7 @@ class Bot:
     # --- voice ----------------------------------------------------------------
 
     def _voice(self, msg: dict, name: str, chat_id: int, group: bool) -> None:
-        media = msg.get("voice") or msg.get("audio")
+        media = msg.get("voice") or msg.get("audio") or {}
         audio = self.api.download(self.api.get_file(media["file_id"])["file_path"])
         blob = self.ledger.put_blob(audio)
         try:
@@ -338,7 +340,7 @@ def pair(env_path: Path, minutes: int = 10, api_factory=None) -> int:
     api = (api_factory or TelegramAPI)(token)
     code = "grin-" + secrets.token_hex(3)
     me = api.get_me()
-    print(f"Send this in a private chat with @{me['username']} within {minutes} minutes:\n\n    {code}\n")
+    print(f"Send this in a private chat with @{me['username']} within {minutes} minutes:\n\n    {code}\n", flush=True)
     deadline, offset = time.time() + minutes * 60, None
     while time.time() < deadline:
         for u in api.get_updates(offset, timeout=30):

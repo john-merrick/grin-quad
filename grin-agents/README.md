@@ -72,6 +72,7 @@ The ledger key is created on first use at `~/.config/grinos/ledger.key`. Keep it
 ```bash
 $V -m pytest -q                            # grin-agents: ledger, pipeline, graph, valuation, web, telegram
 (cd ../val-machine && .venv/bin/python -m pytest -q)   # distval engine + FCFF math
+uvx ruff@0.17.2 check . && uvx mypy@2.4.0  # lint + types; versions in requirements-dev.txt, config in pyproject.toml
 $V evals/run_all.py                        # every agent's eval on its production model → evals/STATUS.json
 $V -m grinos audit                         # ledger chain + HMAC + head anchor + every source blob
 ```

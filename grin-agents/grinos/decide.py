@@ -33,9 +33,9 @@ def decision_message(claim: dict, facts: dict, config: dict | None) -> str:
 def decide_claim(claim: dict, config: dict | None, model: str = "sonnet", use_agent: bool = True) -> dict:
     facts = lever_facts(claim, config)
     if not use_agent:
-        out = {"action": "verify", "nature": "not_applicable", "materiality": "medium",
-               "rationale": "rules-only: route everything to verification"}
-        return {"facts": facts, "agent": None, "agent_meta": None, **out}
+        rules_only = {"action": "verify", "nature": "not_applicable", "materiality": "medium",
+                      "rationale": "rules-only: route everything to verification"}
+        return {"facts": facts, "agent": None, "agent_meta": None, **rules_only}
     out, meta = call_agent("decision-model", decision_message(claim, facts, config), DECISION_SCHEMA, model=model)
     # Fail open to verification: the verifier is the safety gate, a crashed triage mustn't drop evidence.
     out = out or {"action": "verify", "nature": "not_applicable", "materiality": "medium",

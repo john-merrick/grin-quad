@@ -24,6 +24,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
 from cases import EXPECTED, FORBIDDEN, SOURCES  # noqa: E402
+
 from grinos.evidence_check import check_claim  # noqa: E402
 from grinos.extract import extract_claims  # noqa: E402
 from grinos.schemas import Claim, Source, sha256  # noqa: E402
@@ -99,7 +100,8 @@ def main() -> int:
     for r in rows:
         print(f"  {r['source']}.r{r['repeat']}: {r['n_claims']} claims, missed={r['missed']}")
         for b in r["bad"][:5]:
-            print(f"     bad: {b['why']} — {re.sub(r'\\s+', ' ', b['claim'].get('quote', ''))[:90]}")
+            quote = re.sub(r"\s+", " ", b["claim"].get("quote", ""))
+            print(f"     bad: {b['why']} — {quote[:90]}")
     print(f"\nresults: {out_dir}")
     return 0 if s["passed"] else 1
 

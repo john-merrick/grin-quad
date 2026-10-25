@@ -20,6 +20,7 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).parents[1] / "tools"))
 
 from config_facts import FORBIDDEN_KEYS, raw_checks  # noqa: E402
+
 from distval.engine import terminal_multiple, value  # noqa: E402
 from distval.industries.registry import REGISTRY  # noqa: E402
 from distval.loader import _load_adapter_class  # noqa: E402
@@ -57,7 +58,7 @@ def apply(config: dict, field: str, new_value) -> dict:
 def check_proposal(proposal: dict, config: dict, verified_ids: set[str],
                    net_debt: float = 0.0, shares: float = 1.0) -> dict:
     problems: list[str] = []
-    field, new = proposal.get("field"), proposal.get("new_value")
+    field, new = str(proposal.get("field") or ""), proposal.get("new_value")
     cites = proposal.get("cites") or []
 
     if not cites:

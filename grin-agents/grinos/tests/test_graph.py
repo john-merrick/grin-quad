@@ -126,7 +126,8 @@ def test_agree_allows_rounding_only(a, b, same):
 
 
 def test_valuations_trace_value_per_share_to_accessions(tmp_path):
-    from grinos import sec, valuation as V
+    from grinos import sec
+    from grinos import valuation as V
     from grinos.tests import sec_fixture as F
     ledger = Ledger(tmp_path)
     raw = yaml.safe_load((ROOT / "examples/valuation/acme.yaml").read_text())

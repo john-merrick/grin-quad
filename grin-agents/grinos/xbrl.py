@@ -239,7 +239,7 @@ def reconcile(snapshot: dict, cik: int) -> dict:
                        "detail": f"assets {a['value']:.1f} ≠ liabilities and equity {le['value']:.1f}",
                        "fact_ids": a["fact_ids"] + le["fact_ids"]})
 
-    for i, r in enumerate(review):
+    for r in review:
         r["id"] = "r_" + hashlib.sha256(f"{r['kind']}|{r['item']}|{r['period']}|{r['detail']}".encode()).hexdigest()[:8]
     restated = sorted(fid for fid, f in ix.facts.items() if f["superseded"])
     return {"entity": snapshot.get("entityName"), "cik": cik, "as_of": snapshot["as_of"], "currency": "USD",

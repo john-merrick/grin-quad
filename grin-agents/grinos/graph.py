@@ -250,7 +250,8 @@ class Graph:
     @classmethod
     def open(cls, ledger: Ledger, path: Path | None = None) -> "Graph":
         path = path or ledger.root / "graph.sqlite"
-        head = next(iter(reversed(list(ledger.entries()))), {}).get("hash", "")
+        entries = list(ledger.entries())
+        head = entries[-1]["hash"] if entries else ""
         if not cls._fresh(path, head):
             write(project(ledger), path)
         return cls(sqlite3.connect(f"file:{path}?mode=ro", uri=True))

@@ -12,10 +12,10 @@ Every inbound and outbound message, and every command, is a ledger entry.
 """
 import json
 import re
-from decimal import Decimal
 import sys
-from datetime import date
 from collections.abc import Callable
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import yaml
@@ -242,7 +242,8 @@ class Desk:
             return f"Not captured: {exc}"
 
     def _valuation_command(self, cmd: str, arg: str, user: str, channel: str) -> str:
-        from grinos import sec, valuation as V
+        from grinos import sec
+        from grinos import valuation as V
         L, parts = self.ledger, arg.split()
         if cmd == "value":
             if not parts:
@@ -320,13 +321,13 @@ class Desk:
             return "\n".join(f"• {r} {u}" for r, u in list(runs.items())[-10:]) or "No runs yet."
         if cmd == "trail":
             cid = arg.strip()
-            rows = [f"#{e['seq']} {e['stage']} {e['actor']['kind']}:{e['actor']['name']} "
-                    f"{json.dumps(e['payload'].get('verdict') or e['payload'].get('action') or '')}"
-                    for e in L.entries() if e["payload"].get("claim_id") == cid]
-            return "\n".join(rows) or f"No claim {cid}."
+            trail = [f"#{e['seq']} {e['stage']} {e['actor']['kind']}:{e['actor']['name']} "
+                     f"{json.dumps(e['payload'].get('verdict') or e['payload'].get('action') or '')}"
+                     for e in L.entries() if e["payload"].get("claim_id") == cid]
+            return "\n".join(trail) or f"No claim {cid}."
         if cmd == "evidence":
-            claims = L.verified_claims(arg.strip().upper() or None)
-            return "\n".join(f"• {c['claim_id']} {c['claim']['statement']}" for c in claims[-30:]) or "No verified evidence."
+            served = L.verified_claims(arg.strip().upper() or None)
+            return "\n".join(f"• {c['claim_id']} {c['claim']['statement']}" for c in served[-30:]) or "No verified evidence."
         if cmd == "audit":
             problems = L.audit()
             n = sum(1 for _ in L.entries())

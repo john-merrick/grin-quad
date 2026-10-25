@@ -26,6 +26,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 
 from cases import SCENARIOS  # noqa: E402
+
 from grinos.analyst import propose  # noqa: E402
 from grinos.proposal_check import check_proposal  # noqa: E402
 

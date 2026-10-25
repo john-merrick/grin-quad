@@ -23,6 +23,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 
 from cases import AS_OF, CASES, SOURCES  # noqa: E402
+
 from grinos.schemas import Claim, Source, sha256  # noqa: E402
 from grinos.verify import verify_claim  # noqa: E402
 

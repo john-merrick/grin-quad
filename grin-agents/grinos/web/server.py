@@ -19,6 +19,7 @@ import threading
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 
 from grinos import longgamma, notion, valuation, voice
 from grinos.desk import Desk
@@ -187,7 +188,7 @@ def make_handler(app: App):
             self._json({"error": msg, **extra}, status)
 
         def _host_ok(self) -> bool:
-            port = self.server.server_address[1]
+            port = cast(tuple, self.server.server_address)[1]
             return self.headers.get("Host", "") in {f"127.0.0.1:{port}", f"localhost:{port}"}
 
         def _body(self, limit: int = MAX_BODY) -> bytes:
@@ -377,7 +378,7 @@ def make_server(ledger: Ledger, port: int = 8765, model: str = "sonnet", desk_ca
 
 def serve(ledger: Ledger, port: int = 8765, model: str = "sonnet") -> int:
     httpd, _ = make_server(ledger, port, model)
-    host, bound = httpd.server_address[:2]
+    host, bound = str(httpd.server_address[0]), httpd.server_port
     print(f"Grin OS dashboard: http://{host}:{bound}/   voice room: http://{host}:{bound}/room", flush=True)
     print(f"ledger: {ledger.root}   (Ctrl-C to stop)", flush=True)
     try:

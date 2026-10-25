@@ -175,6 +175,7 @@ def test_run_without_env_prints_setup(ledger, monkeypatch, capsys):
 
 def test_pairing_allowlists_only_the_sender_of_the_code(tmp_path, monkeypatch, capsys):
     import re
+
     from grinos import telegram as tg
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     env = tmp_path / ".env"

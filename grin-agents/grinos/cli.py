@@ -32,11 +32,12 @@ from pathlib import Path
 
 import yaml
 
-from grinos.ledger import Ledger, LedgerCorrupt
 from grinos import notion
 from grinos.env import load_env
+from grinos.ledger import Ledger, LedgerCorrupt
 from grinos.pipeline import human_verdict, ingest
 from grinos.proposals import PAST, analyse, decide_proposal, pending, proposal_state
+
 
 def default_root() -> Path:
     return Path(os.environ.get("GRINOS_HOME", Path(__file__).parents[1] / "var"))

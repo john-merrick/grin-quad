@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grinos import decide as decide_mod, sec, valuation as V, verify
+from grinos import decide as decide_mod
+from grinos import sec, verify
+from grinos import valuation as V
 from grinos.ledger import Ledger
 from grinos.pipeline import ingest
 from grinos.tests import sec_fixture as F

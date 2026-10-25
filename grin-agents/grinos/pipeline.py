@@ -13,6 +13,7 @@ import inspect
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from typing import Any
 
 from grinos import evidence_check, levers
 from grinos.decide import decide_claim
@@ -66,7 +67,7 @@ def ingest(ledger: Ledger, source_bytes: bytes, source_meta: dict, claims: list[
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(assess, parsed))
 
-    summary = {"run_id": run_id, "claims": []}
+    summary: dict[str, Any] = {"run_id": run_id, "claims": []}
     for claim, (dec, ver) in zip(parsed, results):
         cid = claim.id
         ledger.append(run_id, "decision", agent_actor("decision-model", model),

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from grinos.schemas import Actor, sha256
 
@@ -44,7 +45,7 @@ def call_agent(name: str, message: str, schema: dict, model: str = "sonnet",
     t0 = time.monotonic()
     with tempfile.TemporaryDirectory() as cwd:
         proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    meta = {"latency_s": round(time.monotonic() - t0, 1), "returncode": proc.returncode}
+    meta: dict[str, Any] = {"latency_s": round(time.monotonic() - t0, 1), "returncode": proc.returncode}
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:

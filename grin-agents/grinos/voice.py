@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from typing import cast
 
 BASE = os.environ.get("VOICESTUDIO_URL", "http://127.0.0.1:3900")
 DEFAULT_VOICES = {
@@ -50,7 +51,7 @@ def health(timeout: float = 2.0) -> dict | None:
 def voices(timeout: float = 5.0) -> list[dict]:
     with _open(urllib.request.Request(f"{BASE}/v1/audio/voices"), timeout) as r:
         data = json.loads(r.read())
-    return data.get("voices", data.get("data", data)) if isinstance(data, dict) else data
+    return cast(list[dict], data.get("voices", data.get("data", data)) if isinstance(data, dict) else data)
 
 
 def voice_map(root: Path | None = None) -> dict[str, str]:

@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from build_cases import BASE, SYNTHETIC
 from config_facts import config_facts
 from grade import grade_case, norm_field, summarise

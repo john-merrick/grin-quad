@@ -20,6 +20,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 
 from cases import CASES  # noqa: E402
+
 from grinos.desk import Desk  # noqa: E402
 from grinos.ledger import Ledger  # noqa: E402
 

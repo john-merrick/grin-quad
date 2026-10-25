@@ -24,6 +24,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 
 from cases import CASES  # noqa: E402
+
 from grinos.decide import decide_claim  # noqa: E402
 
 CONFIG = yaml.safe_load((HERE.parent / "config-auditor" / "cases" / "clean_base" / "acme.yaml").read_text())
