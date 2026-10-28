@@ -37,3 +37,17 @@ Up to 3 candidates. Each is a short rationale plus a list of `edits`. Each edit 
 - Make the candidates different from each other: different wording or placement, not copies.
 
 Return only JSON: `{"candidates": [{"rationale": "...", "edits": [{"find": "...", "replace": "..."}]}]}`.
+
+## When asked for a reference pack instead
+
+Sometimes you get only `<agent>` and `<failures>`, and are asked to draft a reference pack. A pack is general
+domain knowledge appended to the agent's prompt, such as how filings lay out tables, or how a valuation
+engine uses a field.
+- Draft one only if missing knowledge explains the failures. If the agent knew enough and just applied it
+  badly, return `{"draft": null}`.
+- The pack must be general and true for any company. Never include a case id, a quote, a company name, a
+  number from the failures, or an expected answer.
+- Keep it under 3,000 characters: short sections and bullets.
+- `name` is short kebab-case. `description` is one sentence on what it covers.
+
+Return only JSON: `{"draft": {"name": "...", "description": "...", "content": "..."}}` or `{"draft": null}`.

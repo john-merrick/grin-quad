@@ -120,7 +120,7 @@ class TelegramAPI:
 
 class Bot:
     def __init__(self, ledger: Ledger, api, desk: Desk, allowed_ids: set[int],
-                 bot_username: str = "", bot_id: int | None = None, model: str = "sonnet",
+                 bot_username: str = "", bot_id: int | None = None, model: str | None = None,
                  background: bool = True):
         self.ledger, self.api, self.desk, self.allowed = ledger, api, desk, allowed_ids
         self.bot_username, self.bot_id, self.model, self.background = bot_username.lower(), bot_id, model, background
@@ -312,7 +312,7 @@ def parse_allowed(raw: str | None) -> set[int]:
     return {int(x) for x in (raw or "").replace(" ", "").split(",") if x.lstrip("-").isdigit()}
 
 
-def run(ledger: Ledger, model: str = "sonnet") -> int:
+def run(ledger: Ledger, model: str | None = None) -> int:
     token = secret("TELEGRAM_BOT_TOKEN")
     allowed = parse_allowed(os.environ.get("TELEGRAM_ALLOWED_USER_IDS"))
     if not token or not allowed:

@@ -23,6 +23,7 @@ HERE = Path(__file__).parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE.parent))
+from added import cases as added_cases  # noqa: E402
 from cases import EXPECTED, FORBIDDEN, SOURCES  # noqa: E402
 from common import results_dir  # noqa: E402
 
@@ -31,6 +32,11 @@ from grinos.extract import extract_claims  # noqa: E402
 from grinos.schemas import Claim, Source, sha256  # noqa: E402
 
 SRC_DIR = ROOT / "evals" / "verifier" / "sources"
+for _c in added_cases("claim-extractor"):                # sources Isaac added, with the facts they must yield
+    SOURCES[_c["id"]] = {"file": None, "text": _c["text"], "kind": _c["kind"], "published_at": "2026-01-01",
+                         "uri": f"added://{_c['id']}"}
+    EXPECTED[_c["id"]] = _c["expected"]
+    FORBIDDEN[_c["id"]] = _c["forbidden"]
 GATES = {"rule_pass_rate": (">=", 0.95), "recall": (">=", 0.80), "forbidden": ("<=", 0)}
 
 
@@ -74,7 +80,7 @@ def main() -> int:
 
     def one(job):
         key, rep = job
-        text = (SRC_DIR / SOURCES[key]["file"]).read_text()
+        text = SOURCES[key].get("text") or (SRC_DIR / SOURCES[key]["file"]).read_text()
         if args.system == "empty":
             claims, metas = [], []
         else:

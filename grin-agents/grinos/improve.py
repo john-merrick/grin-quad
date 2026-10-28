@@ -109,7 +109,7 @@ def check_candidate(old: str, new: str | None, leaks: set[str]) -> list[str]:
     return problems
 
 
-def propose(agent: str, body: str, failures: list[dict], model: str = "sonnet", call=None) -> tuple[list[dict], dict]:
+def propose(agent: str, body: str, failures: list[dict], model: str | None = None, call=None) -> tuple[list[dict], dict]:
     """Candidates from the optimiser, each applied and checked: [{rationale, edits, body, problems, version}]."""
     out, meta = (call or call_agent)("prompt-optimiser", message(agent, body, failures), OPT_SCHEMA, model=model)
     leaks = leak_tokens(failures)
@@ -155,12 +155,20 @@ def diff_size(old: str, new: str) -> int:
 
 # --- failures to learn from -----------------------------------------------------------------------
 
-def failures_from_report(report: dict, limit: int = 12) -> list[dict]:
-    """The failing cases of an eval report, in the optimiser's input shape (what it got, what it did)."""
+def holdout_ids(agent: str) -> set[str]:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parents[1] / "evals"))
+    import added
+    return added.holdout_ids(agent)
+
+
+def failures_from_report(report: dict, limit: int = 12, exclude: set[str] | None = None) -> list[dict]:
+    """The failing cases of an eval report, in the optimiser's input shape (what it got, what it did).
+    `exclude`: held-out case ids, which the optimiser must never see."""
     rows = report.get("rows") or report.get("cases") or []
     out = []
     for r in rows:
-        if r.get("case_pass") is False:
+        if r.get("case_pass") is False and r.get("id") not in (exclude or set()):
             got = {k: v for k, v in r.items() if k not in ("case_pass", "repeat", "cost_usd", "id", "drafts")}
             text = json.dumps(got, default=str)
             out.append({"id": r["id"], "result": json.loads(text) if len(text) <= 1500 else text[:1500] + "…"})
@@ -208,13 +216,23 @@ def decide_promotion(ledger: Ledger, promotion_id: str, decision: str, who: str,
                for e in entries):
             return f"{promotion_id} was already decided"
         return None
-    if decision == "approve":
-        _not_stale(sel["payload"])                      # refuse before anything is recorded
+    variant = "variant" in sel["payload"]
+    if decision == "approve":                           # refuse before anything is recorded
+        if variant:
+            from grinos import optimize
+            if optimize.current_parent(sel["payload"]["agent"]) != sel["payload"]["parent"]:
+                raise ValueError(f"{sel['payload']['agent']} changed since this was planned: plan again")
+        else:
+            _not_stale(sel["payload"])
     entry = ledger.append_if(sel["run_id"], "prompt_promotion_decision", Actor(kind="human", name=who, version="-"),
                              {"promotion_id": promotion_id, "decision": decision, "note": note.strip(),
                               "channel": channel}, refs=[f"entry:{sel['hash']}"], guard=first)
     if decision == "approve":
-        promote(ledger, sel["payload"] | {"run_id": sel["run_id"]}, who)
+        if variant:
+            from grinos import optimize
+            optimize.apply_variant(ledger, sel["payload"] | {"run_id": sel["run_id"]}, who)
+        else:
+            promote(ledger, sel["payload"] | {"run_id": sel["run_id"]}, who)
     return entry
 
 

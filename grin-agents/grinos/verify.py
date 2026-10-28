@@ -5,7 +5,7 @@ A rule rejection is final — the agent can't overrule it.
 from datetime import date
 
 from grinos.evidence_check import check_claim, context_window
-from grinos.llm import call_agent
+from grinos.llm import call_agent, tool_files
 from grinos.schemas import Claim, Source, attr, fence
 
 VERDICT_SCHEMA = {
@@ -44,7 +44,7 @@ def verifier_message(claim: Claim, source: Source, source_text: str, rules: dict
 
 
 def verify_claim(claim: Claim, source: Source, source_text: str, as_of: date,
-                 model: str = "sonnet", use_agent: bool = True) -> dict:
+                 model: str | None = None, use_agent: bool = True) -> dict:
     """Returns {rules, agent, agent_meta, verdict}. `agent` is None if rules rejected or use_agent=False."""
     rules = check_claim(claim, source, source_text, as_of)
     if rules["rules_verdict"] == "rejected":
@@ -52,7 +52,7 @@ def verify_claim(claim: Claim, source: Source, source_text: str, as_of: date,
     if not use_agent:
         return {"rules": rules, "agent": None, "agent_meta": None, "verdict": "verified"}
     out, meta = call_agent("verifier", verifier_message(claim, source, source_text, rules),
-                           VERDICT_SCHEMA, model=model)
+                           VERDICT_SCHEMA, model=model, **tool_files("verifier", {"source.txt": source_text}))
     # An agent failure is not a pass: fail closed to human review.
     verdict = out["verdict"] if out else "needs_human"
     return {"rules": rules, "agent": out, "agent_meta": meta, "verdict": verdict}

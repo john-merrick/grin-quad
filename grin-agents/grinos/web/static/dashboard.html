@@ -77,6 +77,22 @@ a.link { color: var(--accent); text-decoration: none; } a.link:hover { text-deco
 .step.invalid { color: var(--bad); border-color: var(--bad); } .step.todo { color: var(--muted); }
 .flag { color: var(--warn); font-size: 13px; }
 select.small, input.small { width: auto; }
+.agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.agent-card { cursor: pointer; } .agent-card:hover { border-color: var(--accent); }
+.kpis { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; }
+.kpis b { display: block; font-size: 17px; }
+.json { white-space: pre-wrap; font: 12px/1.45 ui-monospace, Menlo, monospace; background: var(--panel); border: 1px solid var(--line);
+        border-radius: 8px; padding: 10px; max-height: 60vh; overflow: auto; }
+svg.chart { width: 100%; height: 220px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; margin-top: 4px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.pass { color: var(--ok); } .fail { color: var(--bad); }
+.heat { border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.heat td { padding: 0; } .heat td.cell { width: 18px; height: 16px; border-radius: 3px; cursor: pointer; }
+.heat td.name { padding-right: 8px; white-space: nowrap; cursor: pointer; }
+.c-ok { background: #1f7a4d; } .c-bad { background: #b3261e; } .c-mid { background: #d29b1f; } .c-none { background: var(--chip); }
+.banner { border-left: 4px solid var(--warn); } .banner.ok { border-left-color: var(--ok); }
+textarea.code { font: 12px/1.45 ui-monospace, Menlo, monospace; min-height: 340px; }
 </style>
 </head>
 <body>
@@ -254,6 +270,8 @@ async function openReview(pid) {
 async function openClaim(cid) {
   const c = await api('/api/claim/' + cid);
   modal(c.claim.statement, claimCard(c, null, null),
+        el('div', {class: 'row'}, 'Turn this claim into an eval case for:', ...['verifier', 'decision-model', 'mid-cycle-analyst'].map(a =>
+          el('button', {class: 'act', onclick: () => caseEditor(a, 'claim:' + cid)}, a))),
         feedbackBox('claim', cid, c.claim.company, c.feedback, () => openClaim(cid)));
 }
 
@@ -368,6 +386,17 @@ const TABS = {
         r.pw_target != null ? Number(r.pw_target).toFixed(2) : '—']),
       async i => { detail.replaceChildren(await coverageDetail(runs[i].run_id)); detail.scrollIntoView(); }));
     p.append(detail);
+  },
+  async Agents(p) {
+    const list = await api('/api/agents');
+    p.append(el('div', {class: 'muted'}, 'Every agent with its live profile, eval status and last week in production. Click one for everything about it.'));
+    p.append(el('div', {class: 'agents'}, ...list.map(a => el('div', {class: 'card agent-card', onclick: () => agentPage(p, a.agent)},
+      el('div', {class: 'row'}, el('strong', {}, a.agent), el('span', {class: 'chip ' + (a.live ? 'ok' : 'warn')}, a.live ? 'Live' : (a.passed ? 'Paused' : 'Failing')),
+        a.pending_promotions ? el('span', {class: 'chip warn'}, `${a.pending_promotions} to review`) : null),
+      el('div', {class: 'row'}, el('span', {class: 'chip'}, a.model), ...a.skills.map(x => el('span', {class: 'chip'}, '📚 ' + x)),
+        ...a.tools.map(x => el('span', {class: 'chip'}, '🔧 ' + x))),
+      el('div', {class: 'kpis'}, el('span', {}, el('b', {}, a.calls_7d), 'calls 7d'), el('span', {}, el('b', {class: a.errors_7d ? 'fail' : ''}, a.errors_7d), 'errors'),
+        el('span', {}, el('b', {}, '$' + a.cost_7d.toFixed(2)), 'cost 7d'), el('span', {}, el('b', {}, a.last_eval ? a.last_eval.slice(5, 10) : '—'), 'last eval'))))));
   },
   async Evals(p) {
     const promos = await api('/api/promotions');
@@ -560,6 +589,222 @@ function riskCard(T, risks, catalysts, reload) {
     el('h3', {}, 'Catalysts'),
     catalysts.length ? table(['event', 'date', 'confidence', 'status'], catalysts.map(x => [x.event, x.date, x.date_confidence, x.status])) : el('div', {class: 'muted'}, 'None.'),
     el('div', {class: 'row'}, ev, cd, el('button', {class: 'act', onclick: () => act('/api/coverage/catalyst', {ticker: T, event: ev.value, date: cd.value}, reload)}, 'Add catalyst')));
+}
+
+// --- agent pages: everything about one agent, down to a single case or call --------------------------------
+
+const COLORS = ['#2f5bd3', '#1f7a4d', '#b3261e', '#9a6700', '#7a3fd3', '#0f7d8c', '#c2185b', '#5d4037'];
+
+function trendChart(runs) {
+  // Rate metrics (0–1) per eval run, oldest left; dashed lines where the agent's version or model changed.
+  const pts = runs.filter(r => r.kind === 'eval' && r.system === 'agent').slice().reverse();
+  const keys = [...new Set(pts.flatMap(r => Object.entries(r.metrics).filter(([, v]) => v >= 0 && v <= 1).map(([k]) => k)))].slice(0, 8);
+  const W = 900, H = 220, L = 34, R = 10, T = 10, B = 24, NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'chart');
+  const add = (tag, attrs, text) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text) n.textContent = text; svg.append(n); return n; };
+  if (!pts.length) { add('text', {x: 20, y: 30, fill: 'currentColor'}, 'No eval runs yet.'); return el('div', {}, svg); }
+  const x = i => L + (pts.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (pts.length - 1)), y = v => T + (1 - v) * (H - T - B);
+  for (const g of [0, 0.5, 1]) { add('line', {x1: L, x2: W - R, y1: y(g), y2: y(g), stroke: '#8884', 'stroke-width': 1}); add('text', {x: 4, y: y(g) + 4, 'font-size': 10, fill: 'currentColor'}, g.toFixed(1)); }
+  pts.forEach((r, i) => { if (i && r.model !== pts[i - 1].model) add('line', {x1: x(i) - 3, x2: x(i) - 3, y1: T, y2: H - B, stroke: '#9a6700', 'stroke-dasharray': '4 3'}); });
+  keys.forEach((k, ki) => {
+    const series = pts.map((r, i) => [i, r.metrics[k]]).filter(([, v]) => v !== undefined);
+    add('polyline', {points: series.map(([i, v]) => `${x(i)},${y(v)}`).join(' '), fill: 'none', stroke: COLORS[ki % COLORS.length], 'stroke-width': 2});
+    for (const [i, v] of series) { const c = add('circle', {cx: x(i), cy: y(v), r: 3.5, fill: COLORS[ki % COLORS.length]});
+      const t = document.createElementNS(NS, 'title'); t.textContent = `${k} ${v.toFixed(3)} · ${pts[i].date} · ${pts[i].model} · ${pts[i].passed ? 'PASS' : 'FAIL'}`; c.append(t); }
+  });
+  pts.forEach((r, i) => add('text', {x: x(i), y: H - 6, 'font-size': 9, 'text-anchor': 'middle', fill: r.passed ? '#1f7a4d' : '#b3261e'}, r.date.slice(4, 8)));
+  return el('div', {}, svg, el('div', {class: 'legend'}, ...keys.map((k, ki) => el('span', {}, el('i', {style: `background:${COLORS[ki % COLORS.length]}`}), k)),
+    el('span', {class: 'muted'}, 'date colour = gate pass/fail · dashed line = model changed')));
+}
+
+function json(obj) { return el('div', {class: 'json'}, JSON.stringify(obj, null, 2)); }
+
+async function openRun(agent, runId) {
+  const r = await api(`/api/agent/${agent}/run/${encodeURIComponent(runId)}`);
+  const s = r.summary;
+  modal(`${agent} · ${runId}`,
+    el('div', {class: 'card'}, el('div', {class: 'row'}, el('span', {class: 'chip ' + (s.passed ? 'ok' : 'bad')}, s.passed ? 'PASSED' : 'FAILED'),
+      el('span', {class: 'muted'}, `${r.rows.length} case runs · ${r.rows.filter(x => x.case_pass === false).length} failed · cost $${Number(s.cost_usd || 0).toFixed(3)}`)),
+      table(['gate', 'value', ''], Object.entries(s.gates || {}).map(([k, ok]) => [k, typeof s[k] === 'number' ? Number(s[k]).toFixed(3) : String(s[k]), el('span', {class: ok ? 'pass' : 'fail'}, ok ? 'pass' : 'FAIL')]))),
+    el('h3', {}, 'Cases (click for the full input, output and grade)'),
+    table(['case', 'rep', 'result', 'details'], r.rows.map(c => [c.id, c.repeat, el('span', {class: c.case_pass === false ? 'fail' : 'pass'}, c.case_pass === false ? '✗ fail' : '✓ pass'),
+      Object.entries(c.fields).slice(0, 5).map(([k, v]) => `${k}=${v}`).join(' · ')]),
+      i => r.rows[i].file ? openCase(agent, runId, r.rows[i].file) : toast('No saved detail for this case')));
+}
+
+async function openCase(agent, runId, file) {
+  const c = await api(`/api/agent/${agent}/run/${encodeURIComponent(runId)}/case/${file}`);
+  modal(`${agent} · ${file}`, ...Object.entries(c).map(([k, v]) => el('div', {class: 'card'}, el('h3', {}, k), json(v))),
+    el('div', {class: 'row'}, el('button', {class: 'act', onclick: () => openRun(agent, runId)}, '← back to the run'),
+      el('button', {class: 'act', onclick: () => caseEditor(agent, `case:${runId}/${file}`)}, '＋ Add a variant of this case')));
+}
+
+async function openTrace(traceId) {
+  const recs = await api('/api/trace/' + traceId);
+  modal('trace ' + traceId.slice(0, 12), ...recs.map(r => el('div', {class: 'card'},
+    el('div', {class: 'row'}, el('span', {class: 'chip ' + (r.level === 'ERROR' ? 'bad' : '')}, r.type), el('strong', {}, r.name),
+      el('span', {class: 'muted'}, `${r.start} · ${(r.duration_ms / 1000 || 0).toFixed(1)}s` + (r.model ? ` · ${r.model} · ${r.prompt_version}` : '') + (r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(4)}` : ''))),
+    r.status ? el('div', {class: 'fail'}, r.status) : null,
+    r.input ? el('details', {}, el('summary', {}, 'input'), el('div', {class: 'json'}, r.input)) : null,
+    r.output ? el('details', {}, el('summary', {}, 'output'), el('div', {class: 'json'}, r.output)) : null,
+    r.usage ? el('div', {class: 'muted'}, 'tokens ' + JSON.stringify(r.usage)) : null,
+    r.type === 'generation' && ['orchestrator', 'claim-extractor', 'verifier', 'decision-model', 'mid-cycle-analyst'].includes(r.name)
+      ? el('button', {class: 'act', onclick: () => caseEditor(r.name, 'trace:' + traceId)}, '＋ Make this call an eval case') : null)));
+}
+
+function caseHeat(agent, m, canAdd, reload) {
+  if (!m.runs.length) return [el('h3', {}, 'Cases over time'), el('div', {class: 'muted'}, 'No eval runs with per-case results yet. The weekly heartbeat (or Optimize) will fill this in.')];
+  const cls = v => v == null ? 'c-none' : v >= 1 ? 'c-ok' : v <= 0 ? 'c-bad' : 'c-mid';
+  const chip = st => ({'new failure': 'bad', 'always failing': 'bad', flaky: 'warn', fixed: 'ok', passing: 'ok', new: ''}[st] || '');
+  const rows = m.cases.map(c => el('tr', {},
+    el('td', {class: 'name', onclick: () => caseHistory(agent, c.id, canAdd, reload)}, c.id, c.added ? ' ✚' : '', c.holdout ? ' 🔒' : ''),
+    el('td', {}, el('span', {class: 'chip ' + chip(c.status)}, c.status)),
+    ...c.results.map((v, i) => { const td = el('td', {class: 'cell ' + cls(v), onclick: () => caseHistory(agent, c.id, canAdd, reload)});
+      td.title = `${m.runs[i].date} · ${m.runs[i].model} · ${v == null ? 'not run' : (v * 100).toFixed(0) + '% pass'}`; return td; })));
+  const counts = m.cases.reduce((a, c) => (a[c.status] = (a[c.status] || 0) + 1, a), {});
+  return [el('h3', {}, 'Cases over time'),
+    el('div', {class: 'muted'}, Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(' · ') + ` · columns are the last ${m.runs.length} eval runs, oldest left · ✚ added by you · 🔒 held out from the optimiser`),
+    el('div', {class: 'tablewrap'}, el('table', {class: 'heat'}, el('tbody', {}, rows))),
+    m.added.length ? el('div', {class: 'muted'}, `${m.added.length} case(s) you added: ` + m.added.map(a => a.id).join(', ')) : null];
+}
+
+async function caseHistory(agent, caseId, canAdd, reload) {
+  let h;
+  try { h = await api(`/api/agent/${agent}/case/${encodeURIComponent(caseId)}`); } catch (e) { return toast(e.message); }
+  const lastFail = h.history.find(r => r.passed.includes(false)), lastPass = h.history.find(r => r.passed.every(Boolean));
+  const fileOf = (r, ok) => r && r.files[r.passed.findIndex(x => x === ok)] || (r && r.files[0]);
+  const compare = el('div', {});
+  if (lastFail && lastPass) compare.append(el('button', {class: 'act', onclick: async () => {
+    const [a, b] = await Promise.all([api(`/api/agent/${agent}/run/${encodeURIComponent(lastFail.run_id)}/case/${fileOf(lastFail, false)}`),
+                                      api(`/api/agent/${agent}/run/${encodeURIComponent(lastPass.run_id)}/case/${fileOf(lastPass, true)}`)]);
+    compare.replaceChildren(el('div', {style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px'},
+      el('div', {}, el('strong', {class: 'fail'}, `last failure · ${lastFail.date} · ${lastFail.model}`), json(a.result || a.output || a)),
+      el('div', {}, el('strong', {class: 'pass'}, `last pass · ${lastPass.date} · ${lastPass.model}`), json(b.result || b.output || b)))); }}, 'Compare the last failure with the last pass'));
+  modal(`${agent} · ${caseId}`,
+    h.added ? el('div', {class: 'muted'}, `Added by ${h.added.added_by} on ${h.added.ts} from ${h.added.source}` + (h.added.holdout ? ' · held out from the optimiser' : '')) : null,
+    table(['run', 'model', 'result', 'detail'], h.history.map(r => [r.date, r.model,
+      el('span', {class: r.passed.every(Boolean) ? 'pass' : 'fail'}, r.passed.map(x => x ? '✓' : '✗').join(' ')),
+      el('span', {}, ...r.files.map(f => el('button', {class: 'act', onclick: () => openCase(agent, r.run_id, f)}, f.replace(caseId + '.', ''))))])),
+    compare,
+    canAdd && h.history[0].files[0] ? el('button', {class: 'act', onclick: () => caseEditor(agent, `case:${h.history[0].run_id}/${h.history[0].files[0]}`, reload)}, '＋ Add a variant of this case') : null);
+}
+
+async function caseEditor(agent, src, reload) {
+  let t;
+  try { t = await api(`/api/agent/${agent}/case_template?from=${encodeURIComponent(src)}`); } catch (e) { return toast(e.message); }
+  const extra = t.case._input; delete t.case._input;
+  const area = el('textarea', {class: 'code'}); area.value = JSON.stringify(t.case, null, 2);
+  modal(`New ${agent} eval case`,
+    el('div', {class: 'muted'}, `From ${src}. Edit the JSON: set the id and the expected outcome. Validated against the ${agent} eval's case shape when you save. ${t.holdout_note}.`),
+    extra ? el('details', {}, el('summary', {}, 'the production input it came from'), el('div', {class: 'json'}, extra)) : null,
+    area,
+    el('div', {class: 'row'}, el('button', {class: 'act primary', onclick: async () => {
+      let c; try { c = JSON.parse(area.value); } catch (e) { return toast('Not valid JSON: ' + e.message); }
+      try { const r = await api(`/api/agent/${agent}/cases`, {case: c, source: src});
+            toast(`Added ${r.id}${r.holdout ? ' (held out from the optimiser)' : ''}. ${r.next}`); dlg.close(); reload && reload(); }
+      catch (e) { toast('Not added: ' + e.message); } }}, 'Save case')));
+}
+
+async function agentPage(p, agent) {
+  const d = await api('/api/agent/' + agent);
+  const reload = () => agentPage(p, agent);
+  const box = el('div', {});
+  box.append(el('div', {class: 'row'}, el('button', {class: 'act', onclick: () => show('Agents')}, '← all agents'),
+    el('h2', {style: 'margin: 0'}, agent), el('span', {class: 'chip ' + (d.live ? 'ok' : 'warn')}, d.live ? 'Live' : 'Paused / failing'),
+    el('span', {class: 'chip'}, d.model), ...d.skills.map(x => el('span', {class: 'chip'}, '📚 ' + x)), ...d.tools.map(x => el('span', {class: 'chip'}, '🔧 ' + x)),
+    el('span', {class: 'mono muted'}, 'version ' + d.version),
+    d.can_add_cases ? el('button', {class: 'act', onclick: () => caseEditor(agent, 'blank', reload)}, '＋ Add eval case') : null,
+    el('button', {class: 'act primary', onclick: () => optimizeFlow(agent, reload)}, '⚡ Optimize')));
+  // the weekly heartbeat: steady, or what got worse
+  const hb = d.heartbeat;
+  box.append(el('div', {class: 'card banner' + (hb.status === 'regressed' ? '' : ' ok')},
+    el('strong', {}, 'Heartbeat: ' + hb.status), el('div', {}, hb.summary),
+    hb.previous ? el('div', {class: 'muted'}, `compared ${String(hb.date).slice(0, 16)} (${hb.model}) with ${String(hb.previous.date).slice(0, 16)} (${hb.previous.model})`) : null));
+  // every case over time
+  const casesBox = el('div', {class: 'card'}, el('h3', {}, 'Cases over time'), el('div', {class: 'muted'}, 'Loading…'));
+  box.append(casesBox);
+  api(`/api/agent/${agent}/cases`).then(m => casesBox.replaceChildren(...caseHeat(agent, m, d.can_add_cases, reload).filter(Boolean)));
+  // evals over time
+  box.append(el('div', {class: 'card'}, el('h3', {}, 'Eval scores over time'), trendChart(d.runs),
+    el('h3', {}, 'Eval runs'), table(['date', 'kind', 'system', 'model', 'result', 'failed / cases', 'cost'], d.runs.map(r =>
+      [r.date, r.kind === 'rsi' ? 'optimize' : 'eval', r.system, r.model || '—', el('span', {class: 'chip ' + (r.passed ? 'ok' : 'bad')}, r.passed ? 'PASS' : 'FAIL'),
+       r.failed == null ? `— / ${r.cases}` : `${r.failed} / ${r.cases}`, r.cost_usd == null ? '—' : '$' + Number(r.cost_usd).toFixed(3)]), i => openRun(agent, d.runs[i].id))));
+  // production
+  const opsRows = d.ops_30d.map(r => [el('span', {class: 'mono'}, r.prompt_version || '—'), r.model, r.calls, el('span', {class: r.errors ? 'fail' : ''}, r.errors),
+    (r.p50_ms / 1000).toFixed(1) + 's', (r.p95_ms / 1000).toFixed(1) + 's', '$' + r.cost_usd.toFixed(3), r.last.slice(0, 16)]);
+  box.append(el('div', {class: 'card'}, el('h3', {}, 'In production (last 30 days, by version)'),
+    opsRows.length ? table(['version', 'model', 'calls', 'errors', 'p50', 'p95', 'cost', 'last'], opsRows) : el('div', {class: 'muted'}, 'No traced calls yet.'),
+    el('h3', {}, 'Recent calls (click for the full trace)'),
+    d.calls.length ? table(['when', 'model', 'version', 'latency', 'tokens out', 'cost', ''], d.calls.map(c => [c.start.slice(0, 19), c.model, el('span', {class: 'mono'}, (c.prompt_version || '').slice(0, 8)),
+      (c.duration_ms / 1000).toFixed(1) + 's', (c.tokens || {}).output_tokens ?? '—', c.cost_usd == null ? '—' : '$' + Number(c.cost_usd).toFixed(4),
+      el('span', {class: c.level === 'ERROR' ? 'fail' : 'muted'}, c.level === 'ERROR' ? 'error' : '')]), i => openTrace(d.calls[i].trace_id)) : el('div', {class: 'muted'}, 'None.')));
+  // optimization
+  const opt = el('div', {class: 'card'}, el('h3', {}, 'Optimization'));
+  for (const x of d.pending) {
+    const note = el('input', {type: 'text', placeholder: 'note (required): why approve or reject'});
+    const v = x.variant || {lever: 'prompt', label: 'prompt edit'};
+    opt.append(el('div', {class: 'card'}, el('div', {class: 'row'}, el('span', {class: 'chip warn'}, 'waiting for you'), el('strong', {}, `${v.lever}: ${v.label}`), el('span', {class: 'mono'}, x.promotion_id),
+        x.stale ? el('span', {class: 'chip bad'}, 'stale') : null),
+      el('div', {class: 'muted'}, `failing cases ${x.failing_cases_before} → ${x.failing_cases_after}` + (x.cost_before != null ? ` · eval cost $${Number(x.cost_before).toFixed(3)} → $${Number(x.cost_after).toFixed(3)}` : '') + ' · no case worse'),
+      el('p', {}, x.rationale),
+      x.all_results ? table(['variant', 'gates', 'failing cases', 'eval cost'], x.all_results.map(r => [r.label, el('span', {class: r.passed ? 'pass' : 'fail'}, r.passed ? 'pass' : 'fail'), r.fails, '$' + Number(r.cost_usd || 0).toFixed(3)])) : null,
+      x.diff ? el('details', {}, el('summary', {}, 'prompt diff'), el('pre', {class: 'excerpt'}, x.diff)) : null,
+      table(['case', 'current', 'candidate'], x.cases.map(c => [c.id, c.before, el('span', {class: c.after > c.before ? 'pass' : ''}, c.after)])),
+      note, el('div', {class: 'row'},
+        el('button', {class: 'act primary', onclick: () => act('/api/promote', {promotion_id: x.promotion_id, decision: 'approve', note: note.value}, reload)}, 'Approve: make it live'),
+        el('button', {class: 'act danger', onclick: () => act('/api/promote', {promotion_id: x.promotion_id, decision: 'reject', note: note.value}, reload)}, 'Reject'))));
+  }
+  if (!d.pending.length) opt.append(el('div', {class: 'muted'}, 'Nothing waiting. Optimize to try prompt edits, other models, skill packs and tools.'));
+  if (d.plans.length) opt.append(el('h3', {}, 'Past plans'), table(['plan', 'when', 'variants', 'estimated', ''], d.plans.map(x => [el('span', {class: 'mono'}, x.plan_id), x.ts.slice(0, 16), x.variants, '$' + Number(x.total_cost_usd).toFixed(2),
+    el('span', {}, el('button', {class: 'act', onclick: () => optimizeFlow(agent, reload, x.plan_id)}, 'choose & run'),
+      el('button', {class: 'act', onclick: () => progress(agent, x.plan_id)}, 'progress'))])));
+  if (d.decided.length) opt.append(el('h3', {}, 'History'), table(['when', 'what', 'detail'], d.decided.map(x => [String(x.ts).slice(0, 16), x.decision || (x.variant ? 'promoted ' + x.lever : x.tried ? 'no winner' : 'promoted'),
+    x.note || x.next || (x.tried ? `tried ${[].concat(x.tried).length}` : '')])));
+  box.append(opt);
+  // profile
+  box.append(el('div', {class: 'card'}, el('h3', {}, 'Profile'),
+    el('div', {class: 'muted'}, `${d.system_chars.toLocaleString()} characters of system prompt · status: ${d.status.passed ? 'passing' : 'not passing'} as of ${d.status.date || '—'}`),
+    el('details', {}, el('summary', {}, 'prompt'), el('pre', {class: 'excerpt'}, d.prompt)),
+    el('div', {}, el('strong', {}, 'Skill library: '), ...d.library.map(x => el('span', {class: 'chip' + (d.skills.includes(x.name) ? ' ok' : ''), title: x.description}, x.name + (x.agents.includes(agent) ? '' : ' (other agents)'))))));
+  if (d.feedback.length) box.append(el('div', {class: 'card'}, el('h3', {}, 'Your corrections and feedback'), table(['when', 'kind', 'text', 'about'], d.feedback.map(f => [f.ts.slice(0, 16), f.kind, f.text, `${f.target_kind}:${f.target_id}`]))));
+  p.replaceChildren(box);
+}
+
+async function optimizeFlow(agent, reload, planId) {
+  modal(`Optimize ${agent}`, el('div', {class: 'empty'}, planId ? 'Loading the saved plan…' : 'Planning: listing model, skill and tool variants, and asking the prompt-optimiser for prompt edits and a skill pack (about $0.05). Nothing is evaluated yet.'));
+  let plan;
+  try { plan = planId ? await api(`/api/agent/${agent}/plan/${planId}`) : await api(`/api/agent/${agent}/optimize/plan`, {}); }
+  catch (e) { return modal('Optimize ' + agent, el('div', {class: 'fail'}, e.message)); }
+  const picks = new Map(plan.variants.map(v => [v.id, el('input', {type: 'checkbox'})]));
+  plan.variants.forEach(v => picks.get(v.id).checked = v.lever !== 'model' || v.est_cost_usd <= plan.baseline_cost_usd * 1.2);
+  const total = el('strong', {});
+  const recalc = () => { total.textContent = '$' + (plan.baseline_cost_usd + plan.variants.filter(v => picks.get(v.id).checked).reduce((a, v) => a + v.est_cost_usd, 0)).toFixed(2); };
+  picks.forEach(c => c.addEventListener('change', recalc)); recalc();
+  modal(`Optimize ${agent}`,
+    el('div', {class: 'card'}, el('div', {}, `Learning from ${plan.failures} failing case(s) and correction(s). Each chosen variant runs the full ${agent} eval; a fresh run of the current agent is the baseline ($${plan.baseline_cost_usd.toFixed(2)}).`),
+      el('div', {class: 'muted'}, 'A winner must pass every gate and do at least as well on every case, then be better (fewer failures) or at least 15% cheaper. It goes live only when you approve it.')),
+    table(['run', 'lever', 'variant', 'why', 'est. cost'], plan.variants.map(v => [picks.get(v.id), v.lever, v.edits ? el('details', {}, el('summary', {}, v.label),
+      ...v.edits.map(e => el('div', {class: 'json'}, '− ' + e.find + '\n+ ' + e.replace))) : v.skill_draft ? el('details', {}, el('summary', {}, v.label), el('div', {class: 'json'}, v.skill_draft.content)) : v.label,
+      v.rationale, '$' + v.est_cost_usd.toFixed(2)])),
+    el('div', {class: 'row'}, 'Estimated total including the baseline:', total,
+      el('button', {class: 'act primary', onclick: async () => {
+        const ids = plan.variants.filter(v => picks.get(v.id).checked).map(v => v.id);
+        try { const r = await api(`/api/agent/${agent}/optimize/run`, {plan_id: plan.plan_id, variant_ids: ids});
+              toast(`Running ${r.variants} variant(s) on Temporal (≈$${r.estimated_cost_usd})`); progress(agent, plan.plan_id); }
+        catch (e) { toast('Not started: ' + e.message); } }}, 'Run the chosen variants')));
+}
+
+async function progress(agent, planId) {
+  const r = await api(`/api/agent/${agent}/optimize/${planId}`);
+  const done = r.result !== null;
+  modal(`Optimize ${agent} · ${planId}`,
+    el('div', {class: 'row'}, el('span', {class: 'chip ' + (done ? 'ok' : 'warn')}, done ? 'finished' : r.started ? 'running on Temporal' : 'not started'),
+      el('a', {class: 'link', href: `http://127.0.0.1:8233/namespaces/default/workflows/${encodeURIComponent(r.workflow_id)}`, target: '_blank', rel: 'noopener noreferrer'}, 'open in Temporal ↗')),
+    table(['variant', 'gates', 'failing cases', 'eval cost'], r.evaluated.map(e => [e.label, el('span', {class: e.passed ? 'pass' : 'fail'}, e.passed ? 'pass' : 'fail'),
+      Object.values(e.per_case).reduce((a, v) => a + (1 - v), 0).toFixed(1), '$' + Number(e.cost_usd || 0).toFixed(3)])),
+    done ? el('div', {}, r.result.winner ? `Winner: ${r.result.label} (${r.result.winner}). Review and approve it on the agent page.` : 'No variant beat the current agent on every case. Nothing changes.') :
+           el('div', {class: 'muted'}, 'Refreshing every 10 seconds while open.'));
+  if (!done && dlg.open) setTimeout(() => dlg.open && progress(agent, planId), 10000);
 }
 
 async function valuationDetail(runId) {

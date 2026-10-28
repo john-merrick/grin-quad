@@ -73,3 +73,25 @@ CASES = [
          "result": {"changed": {"duration_score": 6}, "expected": "no change to the scores on cyclical softness"}}],
         r"cyclical.{0,200}(never|not|no).{0,80}(mid.cycle|mid_cycle|scores?)"),
 ]
+
+
+# Reference-pack drafting (grinos.optimize.draft_skill): knowledge the agent lacked, general and leak-free.
+# `expect_pack`: whether missing knowledge explains the failures; `covers` must match a good pack.
+PACK_CASES = [
+    {"id": "pack_thousands", "agent": "claim-extractor", "expect_pack": True,
+     "covers": r"(in thousands|thousands).{0,200}(million|1,?000|scale)|scale.{0,120}thousand",
+     "failures": [
+         {"id": "scaled_revenue", "quotes": ["Net sales | $ 1,758,612 | $ 1,695,583"],
+          "result": {"claimed_value_usd_m": 1758612.0, "expected": "1,758.6: the table header says (In thousands)"}},
+         {"id": "scaled_ebit", "quotes": ["Operating income | 353,912 | 333,018"],
+          "result": {"claimed_value_usd_m": 353912.0, "expected": "353.9: the table is in thousands"}}]},
+    {"id": "pack_terminal_multiple", "agent": "mid-cycle-analyst", "expect_pack": True,
+     "covers": r"(duration|stability).{0,300}(multiple|terminal)",
+     "failures": [
+         {"id": "score_jump", "quotes": ["retention was 95% for the sixth year"],
+          "result": {"changed": {"duration_score": 10}, "expected": "a 1-point move: each point on both scores moves the multiple ~1.3x"}}]},
+    {"id": "pack_not_knowledge", "agent": "verifier", "expect_pack": False, "covers": r".",
+     "failures": [
+         {"id": "flaky_format", "quotes": ["Gross margin was 30.0%"],
+          "result": {"error": "the agent returned malformed JSON once; it verified the same claim correctly on retry"}}]},
+]

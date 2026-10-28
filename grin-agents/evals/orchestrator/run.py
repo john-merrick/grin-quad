@@ -24,12 +24,14 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE.parent))
+from added import cases as added_cases  # noqa: E402
 from cases import CASES, TICKERS  # noqa: E402
 from common import results_dir  # noqa: E402
 
 from grinos.llm import call_agent  # noqa: E402
 from grinos.orchestrator import PLAN_SCHEMA, check_plan, invented_numbers, plan_message  # noqa: E402
 
+CASES = CASES + added_cases("orchestrator")      # cases Isaac added from the dashboard
 GATES = {"action_recall": (">=", 0.9), "spurious_rate": ("<=", 0.05), "human_respected": (">=", 1.0),
          "arg_validity": (">=", 1.0), "consult_recall": (">=", 0.85), "consult_precision": (">=", 0.8),
          "invented_numbers": ("<=", 0)}

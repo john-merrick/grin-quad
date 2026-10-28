@@ -37,7 +37,7 @@ def new_run_id() -> str:
 
 
 def ingest(ledger: Ledger, source_bytes: bytes, source_meta: dict, claims: list[dict] | None, as_of: date,
-           config: dict | None = None, model: str = "sonnet", run_id: str | None = None,
+           config: dict | None = None, model: str | None = None, run_id: str | None = None,
            workers: int = 6, claim_actor: Actor | None = None) -> dict:
     run_id = run_id or new_run_id()
     with trace.span("ingest", session_id=run_id, input={k: str(v) for k, v in source_meta.items()},
@@ -50,7 +50,7 @@ def ingest(ledger: Ledger, source_bytes: bytes, source_meta: dict, claims: list[
 
 
 def _ingest(ledger: Ledger, source_bytes: bytes, source_meta: dict, claims: list[dict] | None, as_of: date,
-            config: dict | None, model: str, run_id: str, workers: int, claim_actor: Actor | None) -> dict:
+            config: dict | None, model: str | None, run_id: str, workers: int, claim_actor: Actor | None) -> dict:
     # Every write is keyed on (run_id, item), so re-running a run (a retried Temporal activity, a crash)
     # appends nothing twice, and finished agent work is reused rather than paid for again. The stages
     # below are also what the Temporal ingest workflow runs, one activity each.
@@ -90,7 +90,7 @@ def record_source(ledger: Ledger, source_bytes: bytes, source_meta: dict, as_of:
     return e["payload"]
 
 
-def record_claims(ledger: Ledger, run_id: str, claims: list[dict] | None, model: str = "sonnet",
+def record_claims(ledger: Ledger, run_id: str, claims: list[dict] | None, model: str | None = None,
                   claim_actor: Actor | None = None) -> list[str]:
     """Extract (or take the given) claims and record each once. The extractor runs at most once per run."""
     src = _source_of(ledger, run_id)
@@ -137,12 +137,12 @@ def unassessed(ledger: Ledger, run_id: str) -> list[dict]:
     return [c for c in _claims_in_order(ledger, run_id) if f"{run_id}:decision:{c['claim_id']}" not in prior]
 
 
-def assess_decide(claim: dict, config: dict | None, model: str = "sonnet") -> dict:
+def assess_decide(claim: dict, config: dict | None, model: str | None = None) -> dict:
     """The decision model on one claim. Writes nothing (its result is recorded by record_assessments)."""
     return decide_claim(claim["claim"], config, model=model)
 
 
-def assess_verify(ledger: Ledger, run_id: str, claim: dict, model: str = "sonnet") -> dict:
+def assess_verify(ledger: Ledger, run_id: str, claim: dict, model: str | None = None) -> dict:
     """Rule checks, then the verifier agent, on one claim against its source. Writes nothing."""
     src = _source_of(ledger, run_id)
     source = Source(**src["source"])
@@ -150,7 +150,7 @@ def assess_verify(ledger: Ledger, run_id: str, claim: dict, model: str = "sonnet
     return verify_claim(Claim(**claim["claim"]), source, text, date.fromisoformat(src["as_of"]), model=model)
 
 
-def record_assessments(ledger: Ledger, run_id: str, results: dict[str, dict], model: str = "sonnet") -> None:
+def record_assessments(ledger: Ledger, run_id: str, results: dict[str, dict], model: str | None = None) -> None:
     """Write decisions, rule checks and verdicts in claim order, each once."""
     for c in _claims_in_order(ledger, run_id):
         cid = c["claim_id"]

@@ -29,7 +29,7 @@ def new_analysis_id() -> str:
     return f"analysis_{datetime.now():%Y%m%d-%H%M%S}_{uuid.uuid4().hex[:6]}"
 
 
-def analyse(ledger: Ledger, company: str, config: dict, config_path: str, model: str = "sonnet",
+def analyse(ledger: Ledger, company: str, config: dict, config_path: str, model: str | None = None,
             net_debt: float = 0.0, shares: float = 1.0, run_id: str | None = None) -> dict:
     """
     Safe to re-run with the same run_id (a retried Temporal activity): the analyst's output is recorded
@@ -44,7 +44,7 @@ def analyse(ledger: Ledger, company: str, config: dict, config_path: str, model:
         return res
 
 
-def _analyse(ledger: Ledger, company: str, config: dict, config_path: str, model: str,
+def _analyse(ledger: Ledger, company: str, config: dict, config_path: str, model: str | None,
              net_debt: float, shares: float, run_id: str) -> dict:
     prior = {e["stage"]: e for e in ledger.entries() if e["run_id"] == run_id}
     if "analysis_done" in prior:

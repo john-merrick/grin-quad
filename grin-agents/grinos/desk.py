@@ -81,7 +81,7 @@ Anything else is a question for the desk; use @analyst @verifier @decision @audi
 
 
 class Desk:
-    def __init__(self, ledger: Ledger, model: str = "sonnet", router_model: str = "haiku",
+    def __init__(self, ledger: Ledger, model: str | None = None, router_model: str = "haiku",
                  call: Callable = call_agent, sec_get: Callable | None = None, orchestrated: bool = True):
         self.ledger, self.model, self.router_model, self.call = ledger, model, router_model, call
         if call is call_agent:                       # the real thing: run agent calls on Temporal when it's up

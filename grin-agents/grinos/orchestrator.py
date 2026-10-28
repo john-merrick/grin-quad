@@ -204,7 +204,7 @@ def start_improvement(ledger: Ledger, agent: str, notify: dict) -> str:
 
 
 def plan(ledger: Ledger, text: str, history: str, ledger_context: str, call=call_agent,
-         model: str = "sonnet") -> tuple[dict | None, dict, str, set[str]]:
+         model: str | None = None) -> tuple[dict | None, dict, str, set[str]]:
     work, runs = open_work(ledger)
     msg = plan_message(text, known_tickers(), work, ledger_context, history)
     out, meta = call("orchestrator", msg, PLAN_SCHEMA, model=model)

@@ -22,12 +22,14 @@ import yaml
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE.parent))
+from added import cases as added_cases  # noqa: E402
 from cases import CASES  # noqa: E402
 from common import results_dir  # noqa: E402
 
 from grinos.decide import decide_claim  # noqa: E402
 
 CONFIG = yaml.safe_load((HERE.parent / "config-auditor" / "cases" / "clean_base" / "acme.yaml").read_text())
+CASES = CASES + added_cases("decision-model")      # cases Isaac added from the dashboard
 GATES = {"lost_evidence_rate": ("<=", 0.0), "action_accuracy": (">=", 0.9), "nature_accuracy": (">=", 0.8)}
 
 
