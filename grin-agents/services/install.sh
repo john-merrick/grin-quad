@@ -24,7 +24,7 @@ plist_cmd() {  # label, program, args...
   <key>Label</key><string>$label</string>
   <key>ProgramArguments</key><array>$args</array>
   <key>WorkingDirectory</key><string>$here</string>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string><key>PYTHONUNBUFFERED</key><string>1</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
@@ -75,7 +75,7 @@ ENV
     echo "langfuse: generated $lf/.env (sign-in email and password are in it)"
   fi
   docker compose -f "$lf/docker-compose.yml" --env-file "$lf/.env" up -d
-  echo "langfuse: http://127.0.0.1:3000"
+  echo "langfuse: http://127.0.0.1:3300"
 fi
 
 if [[ $temporal == 1 ]]; then

@@ -131,6 +131,6 @@ def test_langfuse_config_prefers_env_then_the_local_stack_file(tmp_path, monkeyp
     monkeypatch.setattr(trace.local_langfuse, "__defaults__", (env,))
     monkeypatch.delenv("GRINOS_LANGFUSE", raising=False)
     monkeypatch.delenv("LANGFUSE_HOST", raising=False)
-    assert trace.langfuse_config() == ("http://127.0.0.1:3000", "pk-lf-1", "sk-lf-1")
+    assert trace.langfuse_config() == ("http://127.0.0.1:3300", "pk-lf-1", "sk-lf-1")
     monkeypatch.setenv("GRINOS_LANGFUSE", "off")
     assert trace.langfuse_config() == (None, None, None)
