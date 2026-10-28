@@ -239,7 +239,7 @@ def langfuse_config() -> tuple[str | None, str | None, str | None]:
         return host, secret("LANGFUSE_PUBLIC_KEY"), secret("LANGFUSE_SECRET_KEY")
     local = local_langfuse()
     if local:
-        return "http://127.0.0.1:3000", local.get("LANGFUSE_INIT_PROJECT_PUBLIC_KEY"), \
+        return "http://127.0.0.1:3300", local.get("LANGFUSE_INIT_PROJECT_PUBLIC_KEY"), \
             local.get("LANGFUSE_INIT_PROJECT_SECRET_KEY")
     return None, None, None
 

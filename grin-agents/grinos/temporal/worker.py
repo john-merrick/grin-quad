@@ -45,8 +45,20 @@ def workers(client: Client, executor: ThreadPoolExecutor) -> list[Worker]:
     return ws
 
 
+async def connect(attempts: int = 30) -> Client:
+    """At login the worker can start before the Temporal server: wait for it (about a minute) rather than crash-loop."""
+    for i in range(attempts):
+        try:
+            return await Client.connect(ADDRESS, namespace=NAMESPACE)
+        except RuntimeError:
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(2)
+    raise RuntimeError("unreachable")
+
+
 async def serve() -> None:
-    client = await Client.connect(ADDRESS, namespace=NAMESPACE)
+    client = await connect()
     with ThreadPoolExecutor(max_workers=32) as executor:
         ws = workers(client, executor)
         print(f"grinos worker: {len(ws)} task queues on {ADDRESS} ({NAMESPACE}); Ctrl-C to stop", flush=True)

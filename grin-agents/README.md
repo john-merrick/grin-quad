@@ -82,7 +82,7 @@ V=../val-machine/.venv/bin/python          # every command below uses $V
 | Notion (optional) | `NOTION_TOKEN`, with the integration added to Valuation Log, Research Notes, Companies and Agent Registry. Check with `$V -m grinos notion-check` (read-only) |
 | Telegram (optional) | `TELEGRAM_BOT_TOKEN`, then pair from your own terminal: `$V -m grinos telegram-pair` (approve the 1Password prompt, then send the printed code to the bot) |
 | Temporal (recommended) | `$V -m pip install -r requirements.txt` (temporalio), `brew install temporal`, then `services/install.sh --temporal` (local dev server, UI `127.0.0.1:8233`, and `grinos worker`). Without it, work runs inline and the ledger records `execution: inline` |
-| Langfuse (optional) | `services/install.sh --langfuse` (docker compose, UI `127.0.0.1:3000`; the sign-in is in `services/langfuse/.env`). grinos reads the keys from that file. Local traces in `var/traces/` work without it |
+| Langfuse (optional) | `services/install.sh --langfuse` (docker compose, UI `127.0.0.1:3300`; the sign-in is in `services/langfuse/.env`). grinos reads the keys from that file. Local traces in `var/traces/` work without it |
 | Voice (optional) | Start [VoiceStudio](https://github.com/debpalash/VoiceStudio) on `127.0.0.1:3900` and create the voices listed under [What needs you](#what-needs-you) |
 
 The ledger key is created on first use at `~/.config/grinos/ledger.key`. Keep it out of synced folders.
