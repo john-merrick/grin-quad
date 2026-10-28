@@ -4,7 +4,7 @@ Proposals are checked deterministically (grinos.proposal_check) before a human s
 """
 import json
 
-from grinos.llm import call_agent
+from grinos.llm import call_agent, tool_files
 from grinos.schemas import fence
 
 PROPOSALS_SCHEMA = {
@@ -46,7 +46,9 @@ def analyst_message(company: str, config: dict, evidence: list[dict], perspectiv
     return msg
 
 
-def propose(company: str, config: dict, evidence: list[dict], model: str = "sonnet",
+def propose(company: str, config: dict, evidence: list[dict], model: str | None = None,
             perspectives: list[dict] | None = None) -> tuple[dict | None, dict]:
+    files = tool_files("mid-cycle-analyst", {"verified_evidence.json": json.dumps(evidence, indent=2, default=str),
+                                             "current_config.json": json.dumps(config, indent=2, default=str)})
     return call_agent("mid-cycle-analyst", analyst_message(company, config, evidence, perspectives),
-                      PROPOSALS_SCHEMA, model=model)
+                      PROPOSALS_SCHEMA, model=model, **files)

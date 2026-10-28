@@ -65,21 +65,21 @@ class IngestWorkflow:
     async def run(self, a: dict) -> dict:
         await _io("ingest_source", a)
         await _ask("claim-extractor", "ingest_extract", {"run_id": a["run_id"], "claims": a.get("claims"),
-                                                         "model": a.get("model", "sonnet")}, minutes=30)
+                                                         "model": a.get("model")}, minutes=30)
         todo = await _io("ingest_unassessed", a["run_id"])
         gate = asyncio.Semaphore(a.get("parallel", 6))
 
         async def assess(c: dict):
             async with gate:
                 dec = await _ask("decision-model", "decide_claim", {"claim": c, "config_path": a.get("config_path"),
-                                                                     "model": a.get("model", "sonnet")})
+                                                                     "model": a.get("model")})
                 ver = None
                 if dec["action"] == "verify":
                     ver = await _ask("verifier", "verify_claim", {"run_id": a["run_id"], "claim": c,
-                                                                   "model": a.get("model", "sonnet")})
+                                                                   "model": a.get("model")})
                 return c["claim_id"], {"decision": dec, "verification": ver}
         results = dict(await asyncio.gather(*(assess(c) for c in todo)))
-        summary = await _io("ingest_record", {"run_id": a["run_id"], "results": results, "model": a.get("model", "sonnet")})
+        summary = await _io("ingest_record", {"run_id": a["run_id"], "results": results, "model": a.get("model")})
         v = [c["verdict"] for c in summary["claims"]]
         await _notify(a, f"Ingested {a['meta'].get('company')} {a['meta'].get('kind')}: {len(v)} claims, "
                          f"{v.count('verified')} verified, {v.count('rejected')} rejected, "
@@ -206,4 +206,67 @@ class ImprovementWorkflow(_Waits):
         return {"result": decision or "expired", "promotion_id": sel["winner"]}
 
 
-WORKFLOWS = [IngestWorkflow, AnalysisWorkflow, CoverageWorkflow, EvalWorkflow, AgentCallWorkflow, ImprovementWorkflow]
+@workflow.defn(name="Optimize")
+class OptimizeWorkflow(_Waits):
+    """Isaac confirmed a plan: evaluate the chosen variants next to a fresh baseline, select under the
+    no-regression rule, and wait for his approval of the winner."""
+
+    @workflow.run
+    async def run(self, a: dict) -> dict:
+        gate = asyncio.Semaphore(a.get("parallel", 2))
+
+        async def score(vid: str):
+            async with gate:
+                prep = await _io("optimize_prepare", {"plan_id": a["plan_id"], "variant_id": vid})
+                rep = await workflow.execute_activity(
+                    "run_eval", {"agent": a["agent"], "eval_dir": a["eval_dir"], "model": prep["model"],
+                                 "repeats": a["repeats"], "prompt_path": prep["prompt_path"], "env": prep["env"]},
+                    task_queue=EVAL_QUEUE, retry_policy=IO_RETRY, start_to_close_timeout=timedelta(hours=1),
+                    heartbeat_timeout=timedelta(minutes=2))
+                return await _io("improve_record_eval", {"label": vid, "report_path": rep["report_path"],
+                                                         "cand_version": vid, "diff_size": prep["diff_size"]})
+        baseline, *results = await asyncio.gather(score("baseline"), *(score(v) for v in a["variant_ids"]))
+        sel = await _io("optimize_select", {"plan_id": a["plan_id"], "baseline": baseline, "results": results})
+        if not sel["winner"]:
+            await _notify(a, f"{a['agent']}: {len(results)} variant(s) scored; none did as well on every case and "
+                             "better overall. Nothing changes.", "no_winner")
+            return {"result": "no_winner"}
+        await _notify(a, f"{a['agent']}: '{sel['label']}' wins ({sel['winner']}): failing cases {sel['before']} → "
+                         f"{sel['after']}, no case worse. Review it on the agent's page, then approve or reject.",
+                      "selected")
+        decision = None
+        for _ in range(a.get("max_days", 14)):
+            decision = await _io("improve_decision", sel["winner"])
+            if decision:
+                break
+            await self.wait(hours=24)
+        if decision == "approve":
+            await workflow.execute_activity("refresh_status", a["agent"], task_queue=EVAL_QUEUE, retry_policy=IO_RETRY,
+                                            start_to_close_timeout=timedelta(hours=1))
+        return {"result": decision or "expired", "promotion_id": sel["winner"]}
+
+
+@workflow.defn(name="Heartbeat")
+class HeartbeatWorkflow:
+    """Weekly: re-run every agent's eval, compare with its last run, and for any that got worse, plan an Optimize
+    round and tell Isaac what it would try and roughly what it would cost. He chooses what runs."""
+
+    @workflow.run
+    async def run(self, a: dict) -> dict:
+        lines, flagged = [], []
+        for agent in a["agents"]:
+            await workflow.execute_activity("refresh_status", agent, task_queue=EVAL_QUEUE, retry_policy=IO_RETRY,
+                                            start_to_close_timeout=timedelta(hours=1))
+            c = await _io("heartbeat_check", agent)
+            lines.append(("⚠ " if c["status"] == "regressed" else "· ") + c["summary"])
+            if c["status"] == "regressed" and a.get("plan", True):
+                p = await _ask("prompt-optimiser", "optimize_plan", agent, minutes=10)
+                flagged.append(agent)
+                lines.append(f"   planned {p['plan_id']}: {p['variants']} variant(s), about ${p['total_cost_usd']:.2f} to run. "
+                             f"Agents → {agent} → Optimization to choose what runs.")
+        await _notify(a, "Weekly eval heartbeat\n" + "\n".join(lines), f"heartbeat:{len(lines)}")
+        return {"flagged": flagged, "lines": lines}
+
+
+WORKFLOWS = [HeartbeatWorkflow, IngestWorkflow, AnalysisWorkflow, CoverageWorkflow, EvalWorkflow, AgentCallWorkflow, ImprovementWorkflow,
+             OptimizeWorkflow]

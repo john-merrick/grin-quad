@@ -114,16 +114,23 @@
     "model": "sonnet",
     "repeats": 2,
     "passed": true,
-    "prompt_version": "9fa27726152e370b",
-    "date": "2026-10-25T19:59:01",
-    "cost_usd": 0.0714,
+    "prompt_version": "fcdfb8edbe28bccd",
+    "profile": {
+      "model": "sonnet",
+      "skills": [],
+      "tools": []
+    },
+    "date": "2026-10-29T08:27:25",
+    "cost_usd": 0.1302,
     "gates": {
       "apply_rate": true,
       "rules_kept": true,
       "leak_rate": true,
       "size_ok": true,
-      "restores": true
+      "restores": true,
+      "pack_ok": true,
+      "pack_leaks": true
     },
-    "trace_id": "4da2051cb12f816b2a3a204982df6a53"
+    "trace_id": "d48ba1005f433b099db20f9abf873187"
   }
 }

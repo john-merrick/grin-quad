@@ -23,19 +23,49 @@ from common import append_history, metrics, per_case, publish  # noqa: E402
 
 from grinos.llm import agent_actor  # noqa: E402
 
-# agent -> (eval dir, production model, repeats)
-SUITE = {
-    "config-auditor": ("config-auditor", "sonnet", 1),
-    "decision-model": ("decision-model", "sonnet", 2),
-    "verifier": ("verifier", "sonnet", 2),
-    "claim-extractor": ("claim-extractor", "sonnet", 2),
-    "mid-cycle-analyst": ("analyst", "sonnet", 2),
-    "orchestrator": ("orchestrator", "sonnet", 2),     # replaced desk-router as the only conversational agent
-    "prompt-optimiser": ("prompt-optimiser", "sonnet", 2),
-    "memo-writer": ("memo-writer", "sonnet", 2),
+# agent -> (eval dir, repeats). The model is the agent's own (its profile in agents/<name>.md).
+EVALS = {
+    "config-auditor": ("config-auditor", 1),
+    "decision-model": ("decision-model", 2),
+    "verifier": ("verifier", 2),
+    "claim-extractor": ("claim-extractor", 2),
+    "mid-cycle-analyst": ("analyst", 2),
+    "orchestrator": ("orchestrator", 2),     # replaced desk-router as the only conversational agent
+    "prompt-optimiser": ("prompt-optimiser", 2),
+    "memo-writer": ("memo-writer", 2),
 }
+
+
+def suite() -> dict[str, tuple[str, str, int]]:
+    """agent -> (eval dir, production model, repeats), the model read from the agent's profile."""
+    from grinos.llm import profile
+    return {a: (ev, profile(a).model, r) for a, (ev, r) in EVALS.items()}
+
+
+class _Suite(dict):
+    """SUITE keeps its old shape for callers; the model is resolved when it's read."""
+    def __getitem__(self, agent):
+        return suite()[agent]
+
+    def items(self):
+        return suite().items()
+
+    def __iter__(self):
+        return iter(EVALS)
+
+    def __contains__(self, agent):
+        return agent in EVALS
+
+
+SUITE = _Suite()
 STATUS = HERE / "STATUS.json"
 HISTORY = HERE / "history.jsonl"     # every run, per prompt version: the trend the improvement loop reads
+
+
+def _profile(agent: str) -> dict:
+    from grinos.llm import profile
+    p = profile(agent)
+    return {"model": p.model, "skills": p.skills, "tools": p.tools}
 
 
 def latest_report(eval_dir: str, model: str) -> dict | None:
@@ -60,6 +90,7 @@ def main() -> int:
             "eval": ev, "model": model, "repeats": repeats,
             "passed": proc.returncode == 0 and bool(summary.get("passed", proc.returncode == 0)),
             "prompt_version": agent_actor(agent, model).version,
+            "profile": _profile(agent),
             "date": datetime.now().isoformat(timespec="seconds"),
             "cost_usd": summary.get("cost_usd"),
             "gates": summary.get("gates"),

@@ -24,11 +24,11 @@ AGENT_ACTIVITIES = {
     "decision-model": [A.decide_claim],
     "verifier": [A.verify_claim],
     "mid-cycle-analyst": [A.analyse],
-    "prompt-optimiser": [A.improve_propose],
+    "prompt-optimiser": [A.improve_propose, A.optimize_plan],
 }
 IO_ACTIVITIES = [A.ingest_source, A.ingest_unassessed, A.ingest_record, A.analysis_open, A.coverage_start,
                  A.coverage_resume, A.valuation_resume, A.notify, A.improve_collect, A.improve_record_eval,
-                 A.improve_select, A.improve_decision]
+                 A.improve_select, A.improve_decision, A.optimize_prepare, A.optimize_select, A.heartbeat_check]
 CONCURRENCY = {"claim-extractor": 2, "decision-model": 6, "verifier": 6, "mid-cycle-analyst": 2}
 
 

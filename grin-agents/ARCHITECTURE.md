@@ -93,6 +93,8 @@ var/               runtime data, gitignored: store/blobs, ledger.jsonl
 | 13 | coverage | `grinos/steps.py` (shared step machine); `drivers.py` (XBRL → distval drivers with provenance); `coverage.py`; LongGamma sync and risks/catalysts contracts; graph drivers and risks; Coverage tab | done |
 | 14 | Temporal | `grinos/temporal/` (activities on per-agent queues, workflows, worker, client); `runtime.py`; inline fallback recorded | done; workflow tests on the local dev server |
 | 15 | orchestrator | `agents/orchestrator.md`, `grinos/orchestrator.py`; every channel's free text; replaces desk-router | done; orchestrator passes on Sonnet |
+| 18 | eval heartbeat + case history + added cases | `grinos/evalwatch.py` (regressions vs flaky), the Heartbeat workflow and its weekly schedule (plans, then asks), the per-case heatmap and history, `evals/added.py` (per-agent case adapters, holdout), Add eval case from a trace, case or claim | done |
+| 17 | agent pages + Optimize | agent profiles in front matter (`model`, `grinos_skills`, `grinos_tools`), with every call taking its model from them; `skills/packs/`; read-only tools with caller-provided files; `grinos/optimize.py` (plan, variants, selection on quality then cost, applying a winner); the Optimize workflow; the Agents tab with drill-down to run, case and trace | done; prompt-optimiser passes with pack drafting |
 | 16 | improvement loop | `agents/prompt-optimiser.md`, `grinos/improve.py`, the Improvement workflow and weekly schedules; promotions in the Evals tab, `/promote` | done; prompt-optimiser passes on Sonnet |
 
 ## Ledger stages added in phases 10–16

@@ -64,7 +64,7 @@ def ingest_source(a: dict) -> dict:
 @traced
 def ingest_extract(a: dict) -> list[str]:
     from grinos import pipeline
-    return pipeline.record_claims(_ledger(), a["run_id"], a.get("claims"), a.get("model", "sonnet"))
+    return pipeline.record_claims(_ledger(), a["run_id"], a.get("claims"), a.get("model"))
 
 
 @activity.defn(name="ingest_unassessed")
@@ -78,14 +78,14 @@ def ingest_unassessed(run_id: str) -> list[dict]:
 @traced
 def decide_claim(a: dict) -> dict:
     from grinos import pipeline
-    return _plain(pipeline.assess_decide(a["claim"], _config(a.get("config_path")), a.get("model", "sonnet")))
+    return _plain(pipeline.assess_decide(a["claim"], _config(a.get("config_path")), a.get("model")))
 
 
 @activity.defn(name="verify_claim")
 @traced
 def verify_claim(a: dict) -> dict:
     from grinos import pipeline
-    return _plain(pipeline.assess_verify(_ledger(), a["run_id"], a["claim"], a.get("model", "sonnet")))
+    return _plain(pipeline.assess_verify(_ledger(), a["run_id"], a["claim"], a.get("model")))
 
 
 @activity.defn(name="ingest_record")
@@ -93,7 +93,7 @@ def verify_claim(a: dict) -> dict:
 def ingest_record(a: dict) -> dict:
     from grinos import pipeline
     L = _ledger()
-    pipeline.record_assessments(L, a["run_id"], a["results"], a.get("model", "sonnet"))
+    pipeline.record_assessments(L, a["run_id"], a["results"], a.get("model"))
     return pipeline.summarise(L, a["run_id"])
 
 
@@ -103,7 +103,7 @@ def ingest_record(a: dict) -> dict:
 @traced
 def analyse(a: dict) -> dict:
     from grinos.proposals import analyse as run
-    res = run(_ledger(), a["company"], _config(a["config_path"]) or {}, a["config_path"], model=a.get("model", "sonnet"),
+    res = run(_ledger(), a["company"], _config(a["config_path"]) or {}, a["config_path"], model=a.get("model"),
               net_debt=a.get("net_debt", 0.0), shares=a.get("shares", 1.0), run_id=a["run_id"])
     return _plain({"run_id": res["run_id"], "proposals": [{k: p[k] for k in ("proposal_id", "field", "ok")}
                                                           for p in res["proposals"]], "no_change": res["no_change"]})
@@ -182,7 +182,7 @@ def notify(a: dict) -> dict:
 @traced
 def agent_call(a: dict) -> dict:
     from grinos.llm import call_agent
-    out, meta = call_agent(a["agent"], a["message"], a["schema"], model=a.get("model", "sonnet"),
+    out, meta = call_agent(a["agent"], a["message"], a["schema"], model=a.get("model"),
                            system_prompt=a.get("system_prompt"))
     return _plain({"output": out, "meta": meta})
 
@@ -198,6 +198,7 @@ def run_eval(a: dict) -> dict:
     env = dict(os.environ)
     if a.get("prompt_path"):
         env["GRINOS_PROMPT_OVERRIDES"] = json.dumps({a["agent"]: a["prompt_path"]})
+    env |= a.get("env") or {}                                 # profile overrides for a variant (model, skills, tools)
     label = "candidate" if a.get("prompt_path") else "current"
     out = _ledger().root / "rsi" / "evals" / a["agent"] / f"{label}_{uuid.uuid4().hex[:8]}"   # never in evals/results
     env["GRINOS_EVAL_OUT"] = str(out)                        # this run's own folder: parallel runs can't mix
@@ -247,7 +248,7 @@ def improve_collect(a: dict) -> dict:
     L, common = _ledger(), _evals_common()
     _, body, _ = improve.current(a["agent"])
     report = common.latest_report(ROOT / "evals" / a["eval_dir"]) or {}
-    failures = improve.failures_from_report(report) + improve.corrections(L, a["agent"])
+    failures = improve.failures_from_report(report, exclude=improve.holdout_ids(a["agent"])) + improve.corrections(L, a["agent"])
     since = (datetime.now(UTC) - timedelta(days=7)).isoformat()
     spent = sum(e["payload"].get("cost_usd") or 0 for e in L.entries()
                 if e["stage"] == "candidate_eval" and e["ts"] >= since)
@@ -270,7 +271,7 @@ def improve_propose(a: dict) -> list[dict]:
     if done:
         return done
     fm, body, _ = improve.current(a["agent"])
-    cands, meta = improve.propose(a["agent"], body, a["failures"], model=a.get("model", "sonnet"))
+    cands, meta = improve.propose(a["agent"], body, a["failures"], model=a.get("model"))
     folder = L.root / "rsi" / wid.replace(":", "_")
     folder.mkdir(parents=True, exist_ok=True)
     out = []
@@ -345,3 +346,84 @@ def refresh_status(agent: str) -> dict:
 
 
 ALL += [improve_collect, improve_propose, improve_record_eval, improve_select, improve_decision, refresh_status]
+
+
+# --- optimize: every lever (grinos.optimize) ---------------------------------------------------------
+
+def _plan(plan_id: str) -> dict:
+    from grinos import optimize
+    return next(p for p in optimize.plans(_ledger()) if p["plan_id"] == plan_id)
+
+
+@activity.defn(name="optimize_prepare")
+@traced
+def optimize_prepare(a: dict) -> dict:
+    """The environment and files that make the agent behave as one variant (or as itself, for the baseline)."""
+    from grinos import optimize
+    plan = _plan(a["plan_id"])
+    if a["variant_id"] == "baseline":
+        return {"env": {}, "prompt_path": None, "model": plan["parent"]["model"], "diff_size": 0}
+    v = next(v for v in plan["variants"] if v["id"] == a["variant_id"])
+    env, prompt_path = optimize.variant_env(plan["agent"], v, _ledger().root / "rsi" / a["plan_id"])
+    return {"env": env, "prompt_path": prompt_path, "model": (v.get("profile") or {}).get("model") or plan["parent"]["model"],
+            "diff_size": v.get("diff_size") or 0}
+
+
+@activity.defn(name="optimize_select")
+@traced
+def optimize_select(a: dict) -> dict:
+    from grinos import optimize
+    L = _ledger()
+    plan = _plan(a["plan_id"])
+    wid = activity.info().workflow_id
+    win = optimize.select(a["baseline"], a["results"])
+    if not win:
+        L.append_once(wid, "no_winner", SYSTEM, {"agent": plan["agent"], "plan_id": plan["plan_id"],
+                                                  "tried": [r["label"] for r in a["results"]]}, idem=f"{wid}:select")
+        return {"winner": None}
+    v = next(v for v in plan["variants"] if v["id"] == win["label"])
+    pid = "pr_" + sha_short(f"{plan['plan_id']}|{v['id']}")
+    fails = lambda r: round(sum(1 - x for x in r["per_case"].values()), 2)  # noqa: E731
+    L.append_once(wid, "prompt_selected", SYSTEM,
+                  {"promotion_id": pid, "agent": plan["agent"], "plan_id": plan["plan_id"], "parent": plan["parent"],
+                   "parent_version": plan["parent"]["version"], "cand_version": v["id"], "variant": v,
+                   "rationale": f"{v['label']}: {v['rationale']}", "baseline": a["baseline"], "candidate": win,
+                   "prompt_blob": L.put_blob((v.get("prompt_body") or "").encode()),
+                   "failing_cases_before": fails(a["baseline"]), "failing_cases_after": fails(win),
+                   "cost_before": a["baseline"].get("cost_usd"), "cost_after": win.get("cost_usd"),
+                   "all_results": [{k: r.get(k) for k in ("label", "passed", "cost_usd", "metrics")} | {"fails": fails(r)}
+                                   for r in a["results"]]},
+                  idem=f"{wid}:select")
+    return {"winner": pid, "label": v["label"], "before": fails(a["baseline"]), "after": fails(win)}
+
+
+def sha_short(text: str) -> str:
+    from grinos.schemas import sha256
+    return sha256(text.encode())[:10]
+
+
+ALL += [optimize_prepare, optimize_select]
+
+
+# --- the eval heartbeat (grinos.evalwatch) -------------------------------------------------------------
+
+@activity.defn(name="heartbeat_check")
+@traced
+def heartbeat_check(agent: str) -> dict:
+    from grinos import evalwatch
+    c = evalwatch.compare(agent)
+    wid = activity.info().workflow_id
+    _ledger().append_once(wid, "eval_heartbeat", SYSTEM, c, idem=f"{wid}:{agent}")
+    return c | {"summary": evalwatch.summary(c)}
+
+
+@activity.defn(name="optimize_plan")
+@traced
+def optimize_plan(agent: str) -> dict:
+    """Plan an Optimize round (one optimiser call, no evals) so Isaac can choose what runs."""
+    from grinos import optimize
+    p = optimize.plan(_ledger(), agent)
+    return {"plan_id": p["plan_id"], "variants": len(p["variants"]), "total_cost_usd": p["total_cost_usd"]}
+
+
+ALL += [heartbeat_check, optimize_plan]

@@ -48,7 +48,7 @@ def chunks(text: str) -> list[str]:
     return out
 
 
-def extract_claims(text: str, company: str, kind: str, model: str = "sonnet") -> tuple[list[dict], list[dict]]:
+def extract_claims(text: str, company: str, kind: str, model: str | None = None) -> tuple[list[dict], list[dict]]:
     """Returns (claims, per-chunk metadata). Claims lack source_blob/company; the pipeline adds them."""
     claims, metas, seen = [], [], set()
     for i, chunk in enumerate(chunks(text)):

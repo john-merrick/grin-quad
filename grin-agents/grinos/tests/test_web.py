@@ -269,3 +269,70 @@ def test_promotions_are_shown_with_their_diff_and_decided_with_a_note(app, monke
     assert req(app, "/api/promote", {"promotion_id": "pr_1", "decision": "approve", "note": ""})[0] == 400
     assert req(app, "/api/promote", {"promotion_id": "pr_1", "decision": "approve", "note": "yes"})[0] == 200
     assert "- Check signs." in (agents / "verifier.md").read_text() and j(req(app, "/api/promotions")) == []
+
+
+def test_agent_pages_drill_down_from_agent_to_run_to_case_to_trace(app, monkeypatch, tmp_path):
+    from grinos import trace
+    from grinos.web import agents_view
+    monkeypatch.setattr(agents_view, "RESULTS", tmp_path)
+    monkeypatch.setenv("GRINOS_HOME", str(tmp_path))
+    run = tmp_path / "verifier" / "results" / "20261029-090000_agent_sonnet"
+    run.mkdir(parents=True)
+    (run / "report.json").write_text(json.dumps({"summary": {"passed": True, "false_accept_rate": 0.0, "cost_usd": 0.3,
+                                                             "gates": {"false_accept_rate": True}},
+                                                 "cases": [{"id": "c1", "repeat": 0, "case_pass": True, "verdict": "verified"},
+                                                           {"id": "c2", "repeat": 0, "case_pass": False, "verdict": "verified"}]}))
+    (run / "c2.r0.json").write_text(json.dumps({"case": {"id": "c2"}, "result": {"verdict": "verified"}, "grade": {"ok": False}}))
+    with trace.span("verifier", kind="generation", model="sonnet", prompt_version="v1", input="claim?") as g:
+        g.end(output={"verdict": "verified"}, cost_usd=0.01)
+
+    agents = j(req(app, "/api/agents"))
+    assert {a["agent"] for a in agents} >= {"verifier", "orchestrator", "prompt-optimiser"}
+    d = j(req(app, "/api/agent/verifier"))
+    assert d["model"] and d["prompt"] and d["runs"][0]["failed"] == 1 and d["calls"][0]["trace_id"] == g.trace_id
+    assert d["optimizable"]["tools"] is True and "financial-statements" in [x["name"] for x in d["library"]]
+    rd = j(req(app, f"/api/agent/verifier/run/{d['runs'][0]['id']}"))
+    assert [(r["id"], r["case_pass"], r["file"]) for r in rd["rows"]] == [("c1", True, None), ("c2", False, "c2.r0.json")]
+    case = j(req(app, f"/api/agent/verifier/run/{d['runs'][0]['id']}/case/c2.r0.json"))
+    assert case["grade"] == {"ok": False}
+    (rec,) = j(req(app, f"/api/trace/{g.trace_id}"))
+    assert rec["input"] == "claim?"
+    assert req(app, "/api/agent/verifier/run/eval:..%2F..%2Fetc")[0] == 404
+    assert req(app, "/api/agent/nobody")[0] == 404
+    assert req(app, "/api/agent/verifier/optimize/run", {"plan_id": "op_0000000000", "variant_ids": ["v_1"]})[0] == 400
+
+
+def test_cases_over_time_and_adding_a_case_from_a_claim(app, monkeypatch, tmp_path):
+    import sys
+    from pathlib import Path
+
+    from grinos.web import agents_view
+    sys.path.insert(0, str(Path(__file__).parents[2] / "evals"))
+    import added
+    data = tmp_path / "added"
+    for d in set(added.EVAL_DIRS.values()):
+        (data / d).mkdir(parents=True)
+    monkeypatch.setattr(added, "HERE", data)
+    monkeypatch.setattr(agents_view, "RESULTS", tmp_path)
+    for name, passes in (("20261020-090000_agent_sonnet", {"c1": True, "c2": True}),
+                         ("20261027-090000_agent_sonnet", {"c1": True, "c2": False})):
+        run = tmp_path / "verifier" / "results" / name
+        run.mkdir(parents=True)
+        (run / "report.json").write_text(json.dumps({"summary": {"passed": True}, "cases": [
+            {"id": k, "repeat": 0, "case_pass": v} for k, v in passes.items()]}))
+        (run / "c2.r0.json").write_text(json.dumps({"case": {"id": "c2"}, "result": {"verdict": "verified" if passes["c2"] else "rejected"}}))
+    m = j(req(app, "/api/agent/verifier/cases"))
+    status = {c["id"]: (c["status"], c["results"]) for c in m["cases"]}
+    assert status["c2"] == ("new failure", [1.0, 0.0]) and status["c1"][0] == "passing"
+    h = j(req(app, "/api/agent/verifier/case/c2"))
+    assert [r["passed"] for r in h["history"]] == [[False], [True]] and h["history"][0]["files"] == ["c2.r0.json"]
+
+    t = j(req(app, f"/api/agent/verifier/case_template?from=claim:{app['cid']}"))
+    assert t["case"]["claim"]["metric"] == "gross_margin" and "Gross margin was 33.0%" in t["case"]["source_text"]
+    case = t["case"] | {"id": "margin_ok", "kind": "valid"}
+    status_code, body, _ = req(app, "/api/agent/verifier/cases", {"case": case, "source": f"claim:{app['cid']}"})
+    assert status_code == 200 and j((status_code, body))["id"] == "added_margin_ok"
+    assert added.cases("verifier")[0]["source_text"].startswith("Gross margin")
+    assert any(e["stage"] == "eval_case_added" for e in app["ledger"].entries())
+    assert req(app, "/api/agent/verifier/cases", {"case": {"id": "bad", "kind": "judgment"}})[0] == 400
+    assert req(app, "/api/agent/memo-writer/case_template")[0] == 404

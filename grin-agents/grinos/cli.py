@@ -218,6 +218,56 @@ def cmd_improve(args) -> int:
     return 2
 
 
+def _local_tz() -> str:
+    """This Mac's time zone name (e.g. Australia/Sydney), so 'Sunday 02:00' means local time."""
+    link = os.path.realpath("/etc/localtime")
+    return link.split("zoneinfo/", 1)[1] if "zoneinfo/" in link else "UTC"
+
+
+def cmd_evals(args) -> int:
+    import asyncio
+
+    from grinos import evalwatch
+    from grinos.temporal import client
+    sys.path.insert(0, str(Path(__file__).parents[1] / "evals"))
+    from run_all import EVALS
+    if args.action == "watch":
+        for agent in EVALS:
+            print(evalwatch.summary(evalwatch.compare(agent)))
+        return 0
+    ids = [int(x) for x in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").replace(" ", "").split(",") if x.lstrip("-").isdigit()]
+    notify = {"channel": "telegram", "target": ids[0], "thread": f"telegram:{ids[0]}"} if ids else \
+        {"channel": "dashboard", "thread": "dashboard:main"}
+    hb = {"agents": list(EVALS), "notify": notify}
+    if args.action == "heartbeat":
+        from datetime import datetime
+        r = client.start(_ledger(args), "Heartbeat", hb, f"heartbeat:{datetime.now():%Y%m%d-%H%M}")
+        print(f"{r['workflow_id']} started: every agent's eval, then a digest to {notify['channel']}")
+        return 0
+    if args.action == "schedule":
+        async def make() -> str:
+            from temporalio.client import (
+                Client,
+                Schedule,
+                ScheduleActionStartWorkflow,
+                ScheduleCalendarSpec,
+                ScheduleRange,
+                ScheduleSpec,
+            )
+            c = await Client.connect(client.ADDRESS, namespace=client.NAMESPACE)
+            try:
+                await c.create_schedule("eval-heartbeat-weekly", Schedule(
+                    action=ScheduleActionStartWorkflow("Heartbeat", hb, id="heartbeat:scheduled", task_queue="grin-workflows"),
+                    spec=ScheduleSpec(calendars=[ScheduleCalendarSpec(day_of_week=[ScheduleRange(0)], hour=[ScheduleRange(2)])],
+                                      time_zone_name=_local_tz())))
+                return f"eval-heartbeat-weekly: Sundays 02:00 {_local_tz()}"
+            except Exception as exc:  # noqa: BLE001 - already exists, or refused: say which
+                return f"eval-heartbeat-weekly: {type(exc).__name__}: {exc}"
+        print(asyncio.run(make()))
+        return 0
+    return 2
+
+
 def cmd_worker(args) -> int:
     from grinos.temporal.worker import main
     return main()
@@ -457,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--as-of", required=True)
     p.add_argument("--uri")
     p.add_argument("--config")
-    p.add_argument("--model", default="sonnet")
+    p.add_argument("--model", default=None, help="override the agent profile's model")
     p.set_defaults(fn=cmd_ingest)
 
     sub.add_parser("runs").set_defaults(fn=cmd_runs)
@@ -483,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", required=True)
     p.add_argument("--net-debt", type=float, default=0.0)
     p.add_argument("--shares", type=float, default=1.0)
-    p.add_argument("--model", default="sonnet")
+    p.add_argument("--model", default=None, help="override the agent profile's model")
     p.set_defaults(fn=cmd_analyse)
     p = sub.add_parser("proposals")
     p.add_argument("--all", action="store_true")
@@ -502,10 +552,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("telegram-pair").set_defaults(fn=cmd_telegram_pair)
     p = sub.add_parser("serve")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--model", default="sonnet")
+    p.add_argument("--model", default=None, help="override the agent profile's model")
     p.set_defaults(fn=cmd_serve)
     p = sub.add_parser("telegram")
-    p.add_argument("--model", default="sonnet")
+    p.add_argument("--model", default=None, help="override the agent profile's model")
     p.set_defaults(fn=cmd_telegram)
     p = sub.add_parser("capture", help="completed research → the LongGamma Notion workflow")
     p.add_argument("kind", nargs="?", choices=["list", "results", "sync", "risks", "go", "push"], default="list")
@@ -531,6 +581,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--note")
     p.add_argument("--who", default=os.environ.get("USER", "analyst"))
     p.set_defaults(fn=cmd_improve)
+    p = sub.add_parser("evals", help="the eval heartbeat: watch (compare each agent's last two runs), heartbeat (run now), schedule (weekly)")
+    p.add_argument("action", choices=["watch", "heartbeat", "schedule"])
+    p.set_defaults(fn=cmd_evals)
     p = sub.add_parser("worker", help="serve every Grin OS task queue on the local Temporal server")
     p.set_defaults(fn=cmd_worker)
     p = sub.add_parser("coverage", help="the LongGamma process, step by step to a verified distval valuation", description=(

@@ -251,7 +251,50 @@ Or, in the dashboard's **Coverage** tab, ask the orchestrator to "cover POOL".
 
 `/why POOL dio` explains any driver, down to its filings.
 
-### 6e. Improve an agent (eval-driven, your approval)
+### 6e. Agents: monitor and optimize each one
+
+Open the dashboard's **Agents** tab and click an agent to see:
+- **Profile:** model, skill packs, tools and version.
+- **Eval scores over time:** each run, marking where the model or version changed. Click a run to see every
+  case, then a case for its full input, output and grade.
+- **Production:** calls, errors, latency and cost by version. Click a call for its full trace.
+- **Optimization:** history and your feedback.
+
+**⚡ Optimize** plans variants across every lever:
+- **Prompt:** edits from the prompt-optimiser.
+- **Model:** Haiku, Sonnet or Opus.
+- **Skills:** packs from `skills/packs/` that suit the agent, or a new one drafted from its failures.
+- **Tools:** read-only `Read`, `Grep` and `Glob` over the full source, for the verifier and the analyst.
+
+You see each variant's estimated eval cost first, and tick which to run. Then:
+1. They run on Temporal next to a fresh baseline.
+2. A winner must pass every gate and do no worse on any case. It must then be better, or at least 15% cheaper.
+3. It goes live only when you approve it on the agent's page. Approval rewrites the agent's front matter
+   (`model`, `grinos_skills`, `grinos_tools`) or its prompt; then re-run its eval and commit.
+
+An agent's profile lives in `agents/<name>.md`: front matter for the model, skills and tools, and the prompt
+body below it.
+
+**The heartbeat (RSI on eval performance).** Every Sunday at 02:00 local time, every agent's eval re-runs
+(`grinos evals schedule`; run it now with `grinos evals heartbeat`; compare with `grinos evals watch`).
+- Each run is compared with the previous one: gates that now fail, cases that newly fail (as opposed to
+  flaky ones), and gate metrics that got worse by more than 5 points.
+- For an agent that regressed, it plans an Optimize round and sends you the digest, with the variants and
+  their estimated cost. You open **Agents → agent → Optimization → choose & run**. Nothing runs or goes live
+  without you.
+
+**Cases over time.** Each agent's page has a heatmap of every case across its last 20 eval runs, labelled
+new failure, always failing, flaky, fixed or passing. Click a case for its run-by-run history, with each run's
+saved input, output and grade, plus a side-by-side of its last failure and last pass.
+
+**Adding and enriching evals.** **＋ Add eval case** (from scratch, a production call's trace, a failing case,
+or a claim in the review pop-up) opens a prefilled case in that eval's shape. You set the expected outcome.
+- Supported for the verifier, decision model, analyst, orchestrator and claim extractor.
+- Cases are stored in `evals/<eval>/cases_added.jsonl`; commit them with the eval.
+- About one in five is held out: it counts in every eval, but the optimiser never sees it, so a "winner"
+  can't just learn the cases.
+
+### 6f. Improve an agent's prompt on a schedule (eval-driven, your approval)
 
 ```bash
 $V -m grinos improve start verifier      # or ask the orchestrator; weekly with: grinos improve schedule

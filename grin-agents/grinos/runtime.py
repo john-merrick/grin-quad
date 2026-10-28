@@ -26,7 +26,7 @@ def _run(ledger: Ledger, workflow: str, args: dict, workflow_id: str, inline, ru
 
 
 def ingest(ledger: Ledger, data: bytes, meta: dict, claims: list[dict] | None, as_of: date,
-           config_path: str | None = None, model: str = "sonnet", notify: dict | None = None, wait: bool = True) -> dict:
+           config_path: str | None = None, model: str | None = None, notify: dict | None = None, wait: bool = True) -> dict:
     from grinos import pipeline
     run_id = pipeline.new_run_id()
     blob = ledger.put_blob(data)
@@ -39,7 +39,7 @@ def ingest(ledger: Ledger, data: bytes, meta: dict, claims: list[dict] | None, a
     return _run(ledger, "Ingest", args, f"ingest:{run_id}", inline, run_id, wait) | {"run_id": run_id}
 
 
-def analyse(ledger: Ledger, company: str, config_path: str, model: str = "sonnet", net_debt: float = 0.0,
+def analyse(ledger: Ledger, company: str, config_path: str, model: str | None = None, net_debt: float = 0.0,
             shares: float = 1.0, notify: dict | None = None, wait_for_proposals: bool = True,
             timeout_s: int = 1200) -> dict:
     """Start the analysis (it then waits for your decisions on Temporal). Returns the analyst's proposals
@@ -81,7 +81,7 @@ def changed(ledger: Ledger, run_id: str) -> int:
     return client.signal_run(ledger, run_id) if _temporal_ok(ledger) else 0
 
 
-def agent_call(ledger: Ledger, name: str, message: str, schema: dict, model: str = "sonnet",
+def agent_call(ledger: Ledger, name: str, message: str, schema: dict, model: str | None = None,
                timeout: int = 600, system_prompt: str | None = None) -> tuple[dict | None, dict]:
     """call_agent, but on the agent's own Temporal queue when Temporal is up (same return shape)."""
     import uuid

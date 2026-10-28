@@ -29,6 +29,7 @@ from grinos.ledger import Ledger
 from grinos.pipeline import human_verdict
 from grinos.proposals import PAST, decide_proposal, pending, proposal_state
 from grinos.schemas import Actor
+from grinos.web import agents_view
 from grinos.xbrl import to_jsonable
 
 STATIC = Path(__file__).parent / "static"
@@ -163,7 +164,7 @@ def referenced_blobs(ledger: Ledger) -> set[str]:
 # --- server --------------------------------------------------------------------------------
 
 class App:
-    def __init__(self, ledger: Ledger, model: str, desk_call=None, user: str | None = None):
+    def __init__(self, ledger: Ledger, model: str | None, desk_call=None, user: str | None = None):
         self.ledger, self.model = ledger, model
         self.token = secrets.token_urlsafe(32)
         self.user = user or os.environ.get("USER", "human")
@@ -279,6 +280,27 @@ def make_handler(app: App):
                     return self._json(to_jsonable(coverage.runs(L)))
                 if m := re.fullmatch(r"/api/coverage/(cov_[\w.\-]+)", path):
                     return self._json(to_jsonable(coverage.view(L, m[1])))
+                if path == "/api/agents":
+                    return self._json(agents_view.agents(L))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)", path):
+                    return self._json(agents_view.agent_detail(L, m[1]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/run/((?:eval|rsi):[\w.\-]+)", path):
+                    return self._json(agents_view.run_detail(m[1], m[2]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/run/((?:eval|rsi):[\w.\-]+)/case/([\w.\-]+)", path):
+                    return self._json(agents_view.case_detail(m[1], m[2], m[3]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/plan/(op_[0-9a-f]{10})", path):
+                    return self._json(agents_view.plan_detail(L, m[1], m[2]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/optimize/(op_[0-9a-f]{10})", path):
+                    return self._json(agents_view.plan_progress(L, m[2]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/cases", path):
+                    return self._json(agents_view.case_matrix(m[1]) | {"added": agents_view.added_cases(m[1])})
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/case/([\w.\-]+)", path):
+                    return self._json(agents_view.case_history(m[1], m[2]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/case_template", path):
+                    q = parse_qs(urlsplit(self.path).query)
+                    return self._json(agents_view.case_template(L, m[1], (q.get("from") or ["blank"])[0]))
+                if m := re.fullmatch(r"/api/trace/([0-9a-f]{16,64})", path):
+                    return self._json(agents_view.trace_detail(m[1]))
                 if path == "/api/promotions":
                     from grinos import improve
                     return self._json([improve.promotion_view(L, p) for p in improve.promotions(L)])
@@ -392,6 +414,40 @@ def make_handler(app: App):
                         return self._json({"ok": True, "message": longgamma.describe(p) + "\nNext, in Desk: " + nxt})
                     except notion.NotPublishable as exc:
                         return self._json({"ok": True, "message": str(exc)})
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/optimize/plan", path):
+                    from grinos import optimize
+                    return self._json(optimize.plan(L, m[1]))
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/optimize/run", path):
+                    from grinos import optimize
+                    from grinos.temporal import client as tclient
+                    plan = next((x for x in optimize.plans(L, m[1]) if x["plan_id"] == data.get("plan_id")), None)
+                    if not plan:
+                        raise ValueError("no such plan: plan first")
+                    chosen = [v for v in data.get("variant_ids") or [] if v in {x["id"] for x in plan["variants"]}]
+                    if not chosen:
+                        raise ValueError("choose at least one variant")
+                    est = plan["baseline_cost_usd"] + sum(v["est_cost_usd"] for v in plan["variants"] if v["id"] in chosen)
+                    try:
+                        r = tclient.start(L, "Optimize", {"plan_id": plan["plan_id"], "agent": m[1], "eval_dir": plan["eval_dir"],
+                                                          "repeats": plan["repeats"], "variant_ids": chosen,
+                                                          "notify": {"channel": "dashboard", "thread": "dashboard:main"}},
+                                          f"optimize:{plan['plan_id']}", run_id=f"optimize:{plan['plan_id']}")
+                    except tclient.TemporalUnavailable as exc:
+                        raise ValueError(f"optimizing runs on the Temporal worker, which isn't reachable: {exc}") from exc
+                    return self._json({"ok": True, "workflow_id": r["workflow_id"], "started": r["started"],
+                                       "variants": len(chosen), "estimated_cost_usd": round(est, 2)})
+                if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)/cases", path):
+                    import sys as _sys
+                    _sys.path.insert(0, str(EVALS))
+                    import added
+                    case = data.get("case")
+                    if not isinstance(case, dict):
+                        raise ValueError("case must be a JSON object")
+                    row = added.add(m[1], case, app.user, str(data.get("source") or "dashboard"))
+                    L.append(f"evalcase_{m[1]}", "eval_case_added", Actor(kind="human", name=app.user, version="-"),
+                             {"agent": m[1], "case_id": row["id"], "source": row["source"], "holdout": row["holdout"]})
+                    return self._json({"ok": True, "id": row["id"], "holdout": row["holdout"],
+                                       "next": "it runs in the next eval of this agent (weekly, or Optimize, or run_all)"})
                 if path == "/api/promote":
                     from grinos import improve
                     pid, decision = str(data.get("promotion_id", "")), str(data.get("decision", ""))
@@ -495,14 +551,14 @@ class LocalServer(ThreadingHTTPServer):
         self.server_name, self.server_port = host, port
 
 
-def make_server(ledger: Ledger, port: int = 8765, model: str = "sonnet", desk_call=None,
+def make_server(ledger: Ledger, port: int = 8765, model: str | None = None, desk_call=None,
                 user: str | None = None) -> tuple[ThreadingHTTPServer, App]:
     app = App(ledger, model, desk_call=desk_call, user=user)
     httpd = LocalServer(("127.0.0.1", port), make_handler(app))
     return httpd, app
 
 
-def serve(ledger: Ledger, port: int = 8765, model: str = "sonnet") -> int:
+def serve(ledger: Ledger, port: int = 8765, model: str | None = None) -> int:
     httpd, _ = make_server(ledger, port, model)
     host, bound = str(httpd.server_address[0]), httpd.server_port
     print(f"Grin OS dashboard: http://{host}:{bound}/   voice room: http://{host}:{bound}/room", flush=True)

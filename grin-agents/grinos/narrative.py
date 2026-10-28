@@ -134,7 +134,7 @@ def message(sh: dict, feedback: list[str] | None = None) -> str:
     return msg
 
 
-def narrate(ctx, model: str = "sonnet", call=call_agent) -> tuple[str | None, dict]:
+def narrate(ctx, model: str | None = None, call=call_agent) -> tuple[str | None, dict]:
     """Bounded: MAX_ATTEMPTS model calls at most. Returns (validated Markdown or None, trace).
     The trace (sheet hash, every attempt's problems and cost) goes into the ledger with the memo."""
     sh, feedback = sheet(ctx), None

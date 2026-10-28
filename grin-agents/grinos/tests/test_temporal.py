@@ -195,3 +195,88 @@ def test_improvement_loop_selects_only_a_no_regression_winner_and_waits_for_appr
     cands = [e["payload"] for e in L.entries() if e["stage"] == "prompt_candidate"]
     assert len(cands) == 2 and any(c["problems"] for c in cands)                       # the rule-dropper was refused
     assert [e["stage"] for e in L.entries()].count("candidate_eval") == 2 and L.audit() == []
+
+
+def test_optimize_workflow_scores_chosen_variants_and_applies_the_approved_winner(home, tmp_path, monkeypatch):
+    import json
+
+    from temporalio import activity
+
+    from grinos import improve, llm, optimize
+    from grinos.tests.test_optimize import BODY, FAIL, fake_optimiser
+    root, _ = home
+    L = Ledger(root)
+    a, s = tmp_path / "agents", tmp_path / "packs"
+    a.mkdir()
+    s.mkdir()
+    (a / "verifier.md").write_text("---\nname: verifier\nmodel: sonnet\n---\n\n" + BODY + "\n")
+    for mod in (llm, optimize, improve):
+        monkeypatch.setattr(mod, "AGENTS_DIR", a)
+    for mod in (llm, optimize):
+        monkeypatch.setattr(mod, "SKILLS_DIR", s)
+    monkeypatch.setattr(improve, "failures_from_report", lambda report, limit=12, exclude=None: FAIL)
+    plan = optimize.plan(L, "verifier", call=fake_optimiser)
+    haiku = next(v for v in plan["variants"] if v["label"] == "switch to haiku")
+    opus = next(v for v in plan["variants"] if v["label"] == "switch to opus")
+
+    @activity.defn(name="run_eval")
+    def fake_eval(x: dict) -> dict:
+        model = x["model"]
+        out = tmp_path / f"rep_{model}_{len(list(tmp_path.glob('rep_*')))}.json"
+        cost = {"haiku": 0.1, "sonnet": 0.3, "opus": 0.5}[model]
+        out.write_text(json.dumps({"summary": {"passed": True, "cost_usd": cost},
+                                   "rows": [{"id": "c1", "case_pass": True}, {"id": "c2", "case_pass": model != "opus"}]}))
+        return {"returncode": 0, "report_path": str(out)}
+
+    @activity.defn(name="refresh_status")
+    def fake_refresh(agent: str) -> dict:
+        return {}
+    monkeypatch.setattr(A, "run_eval", fake_eval)
+    monkeypatch.setattr(A, "refresh_status", fake_refresh)
+
+    async def go(client):
+        h = await client.start_workflow("Optimize", {"plan_id": plan["plan_id"], "agent": "verifier", "eval_dir": "verifier",
+                                                     "repeats": 1, "variant_ids": [haiku["id"], opus["id"]]},
+                                        id=f"optimize:{plan['plan_id']}", task_queue="grin-workflows")
+        for _ in range(150):
+            if improve.promotions(L):
+                break
+            await asyncio.sleep(0.1)
+        (p,) = improve.promotions(L)
+        assert p["variant"]["label"] == "switch to haiku" and p["cost_after"] < p["cost_before"]  # as good, a third the cost
+        assert llm.profile("verifier").model == "sonnet"                                           # nothing live yet
+        improve.decide_promotion(L, p["promotion_id"], "approve", "isaac", "same quality, cheaper")
+        await h.signal("ledger_changed")
+        return await h.result()
+    out = asyncio.run(_with_worker(go))
+    assert out["result"] == "approve" and llm.profile("verifier").model == "haiku"
+    assert [e["stage"] for e in L.entries()].count("candidate_eval") == 3 and L.audit() == []
+
+
+def test_heartbeat_reruns_evals_and_plans_only_for_agents_that_regressed(home, monkeypatch):
+    from temporalio import activity
+
+    from grinos import evalwatch, optimize
+    root, _ = home
+    L = Ledger(root)
+    ran = []
+
+    @activity.defn(name="refresh_status")
+    def fake_refresh(agent: str) -> dict:
+        ran.append(agent)
+        return {}
+    monkeypatch.setattr(A, "refresh_status", fake_refresh)
+    monkeypatch.setattr(evalwatch, "compare", lambda agent: {"agent": agent, "status": "regressed" if agent == "verifier" else "steady",
+                                                             "regressed_gates": [], "new_failures": ["c2"], "worse_metrics": {},
+                                                             "flaky": []})
+    monkeypatch.setattr(optimize, "plan", lambda ledger, agent, call=None: {"plan_id": "op_0123456789", "variants": [1, 2],
+                                                                          "total_cost_usd": 1.2})
+
+    async def go(client):
+        return await client.execute_workflow("Heartbeat", {"agents": ["verifier", "decision-model"]},
+                                             id="heartbeat:test", task_queue="grin-workflows")
+    out = asyncio.run(_with_worker(go))
+    assert ran == ["verifier", "decision-model"] and out["flagged"] == ["verifier"]
+    note = next(e["payload"]["text"] for e in L.entries() if e["stage"] == "notification")
+    assert "⚠ verifier: 1 new failing case(s): c2" in note and "op_0123456789" in note and "decision-model: steady" in note
+    assert sum(e["stage"] == "eval_heartbeat" for e in L.entries()) == 2

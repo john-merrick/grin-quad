@@ -16,22 +16,32 @@ import json
 import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE.parent))
+from added import cases as added_cases  # noqa: E402
 from cases import AS_OF, CASES, SOURCES  # noqa: E402
 from common import results_dir  # noqa: E402
 
 from grinos.schemas import Claim, Source, sha256  # noqa: E402
 from grinos.verify import verify_claim  # noqa: E402
 
+CASES = CASES + added_cases("verifier")      # cases Isaac added from the dashboard
+
 GATES = {"false_accept_rate": ("<=", 0.0), "tool_reject_rate": (">=", 1.0), "valid_accept_rate": (">=", 0.85),
          "reason_match_rate": (">=", 0.9)}
 
 
 def load(case: dict) -> tuple[Claim, Source, str]:
+    if case.get("source_text"):                                           # an added case carries its source
+        m = case["source_meta"]
+        text = case["source_text"]
+        source = Source(blob=sha256(text.encode()), uri=m["uri"], kind=m["kind"], company=case["claim"]["company"],
+                        published_at=date.fromisoformat(str(m["published_at"])))
+        return Claim(source_blob=source.blob, **case["claim"]), source, text
     meta = SOURCES[case["source"]]
     text = (HERE / "sources" / meta["file"]).read_text()
     source = Source(blob=sha256(text.encode()), uri=meta["uri"], kind=meta["kind"],

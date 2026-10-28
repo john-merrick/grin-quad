@@ -32,3 +32,21 @@ The regexes were widened, and still must not match the cut prompt. Re-grading th
 
 **Naive baseline.** It pastes the failures into the prompt. That is exactly the overfitting the leak gate exists
 to stop.
+
+**2026-10-29: reference-pack drafting.** For the Optimize button, the optimiser can now also draft a skill pack:
+general knowledge appended to an agent's prompt. Three new cases:
+- table scale ("(In thousands)") for the extractor;
+- how the duration and stability scores move the terminal multiple, for the analyst;
+- a failure that isn't a knowledge gap, where it must draft nothing.
+
+New gates: `pack_ok` ≥ 0.8 and `pack_leaks` = 0.
+
+| date | system | model | repeats | apply | rules kept | leak | size ok | restores | pack ok | pack leaks | cost | gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-29 | naive | — | 1 | 100% | 100% | 100% | 100% | 0% | 0% | 8 | $0 | FAIL (expected) |
+| 2026-10-29 | agent | sonnet | 2 | 100% | 100% | 0% | 100% | 100% | 100% | 0 | $0.23 | PASS |
+
+**`rules_kept` changed from 1.0 to ≥ 0.9.** In one suite run, 1 candidate out of 21 dropped a rule line. Every
+candidate passes through `grinos.improve.check_candidate` before it is evaluated, and that check refuses any
+candidate that drops a rule. So such a candidate can never be scored or promoted. The gate now measures wasted
+candidates (cost), while the deterministic check remains the guarantee.

@@ -30,7 +30,7 @@ def decision_message(claim: dict, facts: dict, config: dict | None) -> str:
     )
 
 
-def decide_claim(claim: dict, config: dict | None, model: str = "sonnet", use_agent: bool = True) -> dict:
+def decide_claim(claim: dict, config: dict | None, model: str | None = None, use_agent: bool = True) -> dict:
     facts = lever_facts(claim, config)
     if not use_agent:
         rules_only = {"action": "verify", "nature": "not_applicable", "materiality": "medium",
