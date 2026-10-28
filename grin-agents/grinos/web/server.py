@@ -29,7 +29,7 @@ from grinos.ledger import Ledger
 from grinos.pipeline import human_verdict
 from grinos.proposals import PAST, decide_proposal, pending, proposal_state
 from grinos.schemas import Actor
-from grinos.web import agents_view
+from grinos.web import agents_view, home_view
 from grinos.xbrl import to_jsonable
 
 STATIC = Path(__file__).parent / "static"
@@ -280,6 +280,8 @@ def make_handler(app: App):
                     return self._json(to_jsonable(coverage.runs(L)))
                 if m := re.fullmatch(r"/api/coverage/(cov_[\w.\-]+)", path):
                     return self._json(to_jsonable(coverage.view(L, m[1])))
+                if path == "/api/home":
+                    return self._json(home_view.home(L))
                 if path == "/api/agents":
                     return self._json(agents_view.agents(L))
                 if m := re.fullmatch(r"/api/agent/([a-z][\w-]*)", path):

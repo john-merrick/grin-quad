@@ -1,0 +1,155 @@
+# The dashboard's Home page: what Grin OS does, how to use each part, and what changed.
+# Keep it current: every change to the app adds a `whats_new` entry (newest first) and updates the feature
+# it touches. The page reads this file live, so an edit shows up on reload.
+
+intro: >
+  Grin OS runs your valuation research on this Mac. You talk to one agent, the orchestrator. Evidence is
+  extracted from filings, checked by a decision model and a verifier, and only then used by the analyst.
+  Every number traces back to a source, every step is recorded in a tamper-evident ledger, and nothing
+  that is your call (approvals, assumptions, risks, prompt changes) happens without you.
+
+flow:
+  - {step: "Bring in evidence", detail: "Ingest a filing or results release (Telegram document, CLI, or ask the orchestrator). Claims are extracted with verbatim quotes."}
+  - {step: "Triage and verify", detail: "The decision model judges whether each claim matters; rules then the verifier check that the quote really supports it. Only verified claims go further."}
+  - {step: "Propose and review", detail: "The analyst proposes assumption changes citing verified claims. You review each cited claim highlighted in its source, then approve or reject."}
+  - {step: "Value step by step", detail: "Coverage takes a company from sources to a distval valuation: drivers from 10 years of XBRL, your scenarios and risks, then a memo."}
+  - {step: "Record the decision", detail: "Finished research goes to Notion (LongGamma) in the house format, with your rationale in your words."}
+  - {step: "Keep improving", detail: "Every agent's eval re-runs weekly. When one slips, an improvement round is planned for you to run and approve."}
+
+features:
+  - id: home
+    tab: Home
+    title: "Home: this page"
+    what: "How the app works, what needs you right now, whether each service is up, and what changed."
+    how:
+      - "Start here. The 'Needs you' list links straight to each thing waiting."
+      - "What's new lists every change, newest first, so you can follow along."
+  - id: desk
+    tab: Desk
+    title: "Talk to the orchestrator"
+    what: "One agent you talk to (here, in Telegram, or in the voice room). It starts work, asks the specialists, and answers in one voice."
+    how:
+      - "Ask in plain words: 'cover POOL', 'run the analyst on FAST', 'is the 13.5% growth number really in the release?'."
+      - "Long work runs in the background on Temporal; you're messaged when it needs you or finishes."
+      - "It never takes your decisions. For approvals, risks or a Notion go, it gives you the exact command to type."
+      - "Commands act directly with no model involved: /pending, /approve, /cover, /cdecide, /risk, /why, /promote, /help."
+  - id: pending
+    tab: Pending
+    title: "Review proposals against their sources"
+    what: "Proposals waiting for you, and claims the verifier couldn't settle."
+    how:
+      - "Click 'Review evidence and decide'. Each cited claim shows the exact text it came from, highlighted in the filing, with links to EDGAR."
+      - "Confirm or dispute each cite. A dispute can also reject the claim from the evidence."
+      - "Add your perspective: it reaches the analyst next time as context, never as evidence."
+      - "Approve unlocks only when every cite is confirmed (the same on Telegram and the CLI)."
+  - id: coverage
+    tab: Coverage
+    title: "Value a company step by step"
+    what: "The LongGamma process as a run you verify one step at a time, ending in a distval valuation with your risks."
+    how:
+      - "Start or resume with a ticker and date (or ask the orchestrator to 'cover POOL')."
+      - "Sources: confirm the filings. Claims: settle any open ones."
+      - "Drivers: each is computed from 10 years of XBRL. Click 'Sources' for the facts and filings behind it. Accept it, set your own value with a note, or keep the config's."
+      - "Scenarios: set bear/bull EBIT and multiples (yours, shown against the base). Risks: add 3–5 with measurable kill criteria, plus Direction."
+      - "When complete: the scenario grid, PW target and memo; then 'Prepare model sync' and 'Prepare risks + catalysts' for Notion."
+      - "Made a mistake? 'Revise' on any driver or scenario decision records a new one; the history stays."
+  - id: agents
+    tab: Agents
+    title: "Watch and improve each agent"
+    what: "Every agent's profile, eval history, production calls, failures and improvements, all clickable down to a single case or call."
+    how:
+      - "Click an agent. The heartbeat banner says whether it's steady or what slipped."
+      - "Cases over time: a heatmap of every eval case across runs (new failure, flaky, fixed…). Click a case for its history and a side-by-side of its last failure and last pass."
+      - "Eval runs: click a run for every case, then a case for its full input, output and grade. Recent calls: click for the full trace."
+      - "＋ Add eval case: from scratch, a production call, a failing case, or a claim. Set the expected outcome; it runs in the next eval."
+      - "⚡ Optimize: see prompt, model, skill and tool variants with estimated costs, tick what to run, watch progress, then approve or reject the winner."
+  - id: proposals
+    tab: Proposals
+    title: "Every proposal and its status"
+    what: "All analyst proposals, pending, approved, rejected or published."
+    how:
+      - "'Review evidence' opens the same pop-up as Pending."
+      - "For an approved one, 'Prepare Notion model sync' shows the exact writes before anything is pushed."
+  - id: valuations
+    tab: Valuations
+    title: "FCFF valuations"
+    what: "Fundamental bear/base/bull DCF runs from SEC XBRL, with sensitivity, reverse DCF and a memo."
+    how:
+      - "Click a run to resolve what blocks it (a missing figure, an adjustment) with a note."
+      - "Run one with `grinos value --assumptions var/assumptions/<ticker>.yaml`."
+  - id: runs
+    tab: Runs
+    title: "Ingest runs and trails"
+    what: "Each ingested source: claims, verified, rejected, needing review. Trail shows one claim's path from source bytes to verdict."
+    how:
+      - "Click a run for every ledger entry. Paste a claim id in Trail for its full history."
+  - id: ops
+    tab: Ops
+    title: "Cost, latency and failures"
+    what: "Agent calls over 7 and 30 days, by prompt version: calls, errors, p50/p95 latency, tokens and cost."
+    how:
+      - "Recent errors link to their trace. Full traces are in Langfuse (http://127.0.0.1:3300)."
+  - id: evals
+    tab: Evals
+    title: "Eval history and prompt promotions"
+    what: "Each agent's eval runs by prompt version, and prompt changes waiting for your approval."
+    how:
+      - "A promotion shows its diff and every case before and after; approve with a note to make it live."
+  - id: notion
+    tab: null
+    title: "Notion (LongGamma)"
+    what: "Finished research is captured in your LongGamma workspace in the house format."
+    how:
+      - "`grinos capture` lists what isn't in Notion yet. Results notes push directly; model syncs need your go with your rationale (`/go lg_… <your words>`)."
+      - "Coverage runs add a risks and catalysts push (Author = Human: they're your entries)."
+  - id: behind
+    tab: null
+    title: "Behind the scenes"
+    what: "The services that keep it running, all on this Mac and started at login."
+    how:
+      - "Temporal (http://127.0.0.1:8233): every agent call and long-running job as a workflow you can watch."
+      - "Langfuse (http://127.0.0.1:3300): full traces of every agent call; sign-in in services/langfuse/.env."
+      - "The ledger (var/ledger.jsonl): the record of truth. The badge at the top says whether it's intact."
+      - "Logs: grin-agents/var/logs/. Restart a service with `launchctl kickstart -k gui/$(id -u)/com.grinos.<name>`."
+
+commands:
+  - {cmd: "grinos coverage start POOL --as-of 2026-09-21 --config ../val-machine/distval/companies/pool.yaml", what: "start or resume coverage"}
+  - {cmd: "grinos analyse FAST --config ../val-machine/distval/companies/fast.yaml", what: "run the mid-cycle analyst"}
+  - {cmd: "grinos capture", what: "completed research not yet in Notion"}
+  - {cmd: "grinos evals watch", what: "each agent's last eval vs the one before"}
+  - {cmd: "grinos why POOL dio", what: "where a number comes from, down to the filing"}
+  - {cmd: "grinos audit", what: "check the ledger is intact"}
+
+whats_new:
+  - date: "2026-10-29"
+    title: "Home page"
+    pr: 5
+    items:
+      - "This page: how the app works, what needs you, live service status, and this changelog."
+  - date: "2026-10-29"
+    title: "Agent pages, Optimize, the eval heartbeat"
+    pr: 4
+    items:
+      - "Agents tab: each agent's eval trend, runs → cases → full detail, production calls → traces."
+      - "⚡ Optimize tries prompt edits, other models, skill packs and read-only tools, shows estimated costs first, and needs your approval for the winner."
+      - "Every agent's eval re-runs Sundays 02:00; regressions get an improvement round planned and sent to you."
+      - "Cases over time (heatmap, history, last-fail vs last-pass) and ＋ Add eval case from a call, a case or a claim."
+  - date: "2026-10-29"
+    title: "Live install fixes"
+    pr: 3
+    items:
+      - "Langfuse moved to port 3300; the worker waits for Temporal at login; service logs show output."
+  - date: "2026-10-29"
+    title: "Verifiable review, coverage, Temporal, orchestrator"
+    pr: 2
+    items:
+      - "Review pop-up: each cited claim highlighted in its source; approval only after every cite is confirmed."
+      - "Coverage: the LongGamma process step by step to a distval valuation, every driver from XBRL with its filings."
+      - "Every agent runs on Temporal; the orchestrator is the only agent you talk to; traces in Langfuse."
+      - "The improvement loop: prompt candidates scored on each agent's eval, live only with your approval."
+  - date: "2026-10-25"
+    title: "The foundation"
+    pr: 1
+    items:
+      - "Evidence pipeline (extract → decide → verify) with a tamper-evident ledger, the research graph and /why."
+      - "FCFF valuation workflow from SEC XBRL; LongGamma capture to Notion; Telegram, dashboard and voice room."

@@ -92,6 +92,17 @@ svg.chart { width: 100%; height: 220px; background: var(--panel); border: 1px so
 .heat td.name { padding-right: 8px; white-space: nowrap; cursor: pointer; }
 .c-ok { background: #1f7a4d; } .c-bad { background: #b3261e; } .c-mid { background: #d29b1f; } .c-none { background: var(--chip); }
 .banner { border-left: 4px solid var(--warn); } .banner.ok { border-left-color: var(--ok); }
+.hero { font-size: 16px; line-height: 1.55; max-width: 820px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.need { display: flex; gap: 12px; align-items: center; }
+.need b { font-size: 24px; min-width: 36px; text-align: right; }
+.status-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.svc { font-size: 13px; padding: 5px 10px; border-radius: 99px; border: 1px solid var(--line); }
+.svc.up::before { content: "●"; color: var(--ok); margin-right: 6px; } .svc.down::before { content: "●"; color: var(--bad); margin-right: 6px; }
+ol.flow { padding-left: 20px; } ol.flow li { margin: 6px 0; }
+.feature ul { margin: 6px 0 8px; padding-left: 18px; } .feature li { margin: 3px 0; }
+.news { border-left: 3px solid var(--accent); padding-left: 12px; margin: 10px 0; }
+code { font: 12px ui-monospace, Menlo, monospace; background: var(--chip); padding: 1px 5px; border-radius: 4px; }
 textarea.code { font: 12px/1.45 ui-monospace, Menlo, monospace; min-height: 340px; }
 </style>
 </head>
@@ -276,6 +287,36 @@ async function openClaim(cid) {
 }
 
 const TABS = {
+  async Home(p) {
+    const h = await api('/api/home');
+    const g = h.guide;
+    const go = tab => tab && tab !== 'Home' ? el('button', {class: 'act', onclick: () => show(tab)}, `Open ${tab} →`) : null;
+    p.append(el('h2', {}, 'Grin OS'), el('p', {class: 'hero'}, g.intro));
+    // what needs you
+    const needs = el('div', {class: 'card'}, el('h3', {}, 'Needs you'));
+    if (!h.needs_you.length) needs.append(el('div', {class: 'muted'}, 'Nothing is waiting on you.'));
+    for (const n of h.needs_you) needs.append(el('div', {class: 'need row'}, el('b', {}, n.count),
+      el('div', {style: 'flex:1'}, el('strong', {}, n.label), n.detail ? el('div', {class: 'muted'}, n.detail) : null), go(n.tab)));
+    // services
+    const svc = el('div', {class: 'card'}, el('h3', {}, 'System status'), el('div', {class: 'status-row'},
+      ...h.status.map(x => x.url ? el('a', {class: 'svc ' + (x.ok ? 'up' : 'down'), href: x.url, target: '_blank', rel: 'noopener noreferrer', title: x.detail}, x.name)
+                                 : el('span', {class: 'svc ' + (x.ok ? 'up' : 'down'), title: x.detail}, x.name))),
+      h.status.some(x => !x.ok) ? el('div', {class: 'muted', style: 'margin-top:6px'}, 'Down: ' + h.status.filter(x => !x.ok).map(x => `${x.name} (${x.detail})`).join(' · ')) : null);
+    p.append(el('div', {class: 'grid2'}, needs, svc));
+    // how it works
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'How it works'),
+      el('ol', {class: 'flow'}, ...g.flow.map(f => el('li', {}, el('strong', {}, f.step + '. '), f.detail)))));
+    // features
+    p.append(el('h2', {}, 'Using each part'), el('div', {class: 'grid2'}, ...g.features.map(f => el('div', {class: 'card feature', id: 'f-' + f.id},
+      el('h3', {}, f.title), el('div', {class: 'muted'}, f.what), el('ul', {}, ...f.how.map(x => el('li', {}, x))), go(f.tab)))));
+    // commands
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'Handy commands (run in grin-agents with ../val-machine/.venv/bin/python -m)'),
+      table(['command', 'what it does'], g.commands.map(c => [el('code', {}, c.cmd), c.what]))));
+    // what's new
+    p.append(el('div', {class: 'card'}, el('h3', {}, "What's new"),
+      ...g.whats_new.map(n => el('div', {class: 'news'}, el('div', {}, el('strong', {}, n.title), el('span', {class: 'muted'}, ` · ${n.date}` + (n.pr ? ` · PR #${n.pr}` : ''))),
+        el('ul', {}, ...n.items.map(x => el('li', {}, x)))))));
+  },
   async Pending(p) {
     const d = await api('/api/pending');
     p.append(el('h2', {}, 'Proposals awaiting you'));
@@ -850,9 +891,8 @@ async function show(name) {
 
 const nav = document.getElementById('tabs');
 for (const name of Object.keys(TABS)) nav.append(el('button', {'data-tab': name, onclick: () => show(name)}, name));
-let start = 'Pending';
-try { start = localStorage.getItem('grin-tab') || start; } catch (_) {}
-show(TABS[start] ? start : 'Pending');
+const start = decodeURIComponent(location.hash.slice(1));     // the front page, unless a link names a tab (#Agents)
+show(TABS[start] ? start : 'Home');
 refreshAudit();
 </script>
 </body>
