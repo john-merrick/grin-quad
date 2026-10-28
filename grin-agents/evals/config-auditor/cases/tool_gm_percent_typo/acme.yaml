@@ -1,0 +1,51 @@
+# Acme Supply (ACME) — synthetic eval fixture, internally consistent by construction.
+# Source: ACME 10-K FY2025, 10-year history FY2016–2025. All dollar values in millions USD.
+#
+# Mid-cycle gross margin (10-yr mean FY2016–2025): 30.0%
+# Mid-cycle opex/sales (10-yr mean FY2016–2025): 20.0%
+# Mid-cycle revenue: 1,126 (average of the FY2026–2030 revenue forecast below)
+# Mid-cycle EBIT = 1,126 × (0.300 − 0.200) = 112.6
+#
+# distval flags (FY2025): none
+
+ticker: ACME
+forecast_years: 5
+
+# Revenue: FY2025 actual = 1,000; ~4% growth in line with the 10-yr organic average.
+revenue:
+  - 1040.0
+  - 1080.0
+  - 1125.0
+  - 1170.0
+  - 1215.0
+
+# Gross margin held at the 10-yr mean.
+gross_margin:
+  - 0.300
+  - 0.300
+  - 30.0
+  - 0.300
+  - 0.300
+
+# Opex % of sales held at the 10-yr mean.
+opex_pct_sales:
+  - 0.200
+  - 0.200
+  - 0.200
+  - 0.200
+  - 0.200
+
+# Working capital days — days of REVENUE (engine base is revenue), 10-yr averages.
+dio: 60.0   # 10-yr avg DIO 60.0 days of revenue
+dso: 45.0   # 10-yr avg DSO 45.0 days of revenue
+dpo: 50.0   # 10-yr avg DPO 50.0 days of revenue
+
+maintenance_capex_pct_sales: 0.02   # FY2025 capex 20 / revenue 1,000 = 2.0%, ≈ D&A
+tax_rate: 0.25                      # FY2025 effective rate 25.0%
+
+mid_cycle_ebit: 112.6
+
+duration_score: 6    # regional share leader; moderate switching costs
+stability_score: 5   # revenue fell 8% in 2020 and recovered in 2021; average cyclicality
+
+other_elements: {}

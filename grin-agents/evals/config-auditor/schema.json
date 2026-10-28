@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticker", "verdict", "findings"],
+  "properties": {
+    "ticker": {"type": "string"},
+    "verdict": {"type": "string", "enum": ["pass", "fail"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "category", "severity", "evidence", "suggested_fix"],
+        "properties": {
+          "field": {"type": "string", "description": "Top-level YAML key, e.g. dio, revenue, mid_cycle_ebit"},
+          "category": {
+            "type": "string",
+            "enum": ["schema", "unit_error", "comment_value_mismatch", "basis_error",
+                     "derivation_error", "unsupported_judgment", "methodology_violation",
+                     "stale_or_unsourced", "other"]
+          },
+          "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+          "evidence": {"type": "string", "description": "Quote the line(s) and state the numbers"},
+          "suggested_fix": {"type": "string"}
+        }
+      }
+    }
+  }
+}

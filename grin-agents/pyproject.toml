@@ -1,0 +1,25 @@
+# Tool config only: grin-agents runs from the val-machine venv and isn't packaged.
+# Versions are pinned in requirements-dev.txt; run them as
+#   uvx ruff@0.17.2 check .        uvx mypy@2.4.0
+# This file overrides any user-level ruff/mypy config, so every machine sees the same checks.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["var", "var.*", "evals/*/results"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines are the house style for prompts, payloads and tables
+    "B905",   # zip() over equal-length scenario/forecast lists; strict= adds noise, not safety
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["grinos", "distval"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["grinos"]
+ignore_missing_imports = true
+warn_unused_ignores = true

@@ -1,0 +1,129 @@
+{
+  "config-auditor": {
+    "eval": "config-auditor",
+    "model": "sonnet",
+    "repeats": 1,
+    "passed": true,
+    "prompt_version": "bd2073bfc458d571",
+    "date": "2026-10-25T19:55:54",
+    "cost_usd": 0.3403,
+    "gates": {
+      "recall_tool": true,
+      "recall_judgment": true,
+      "recall_real": true,
+      "clean_false_alarm_rate": true,
+      "verdict_accuracy": true
+    },
+    "trace_id": "d8c11dca6e2c2816615da30db2e87dfa"
+  },
+  "decision-model": {
+    "eval": "decision-model",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "339a46c9ee22aeaa",
+    "date": "2026-10-25T19:56:14",
+    "cost_usd": 0.1872,
+    "gates": {
+      "lost_evidence_rate": true,
+      "action_accuracy": true,
+      "nature_accuracy": true
+    },
+    "trace_id": "f585c7c55e56276374c72cefd4af9c79"
+  },
+  "verifier": {
+    "eval": "verifier",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "11ccef38a522f6d8",
+    "date": "2026-10-25T19:57:32",
+    "cost_usd": 0.3245,
+    "gates": {
+      "false_accept_rate": true,
+      "tool_reject_rate": true,
+      "valid_accept_rate": true,
+      "reason_match_rate": true
+    },
+    "trace_id": "4fa76543e80fb7078e3b231ee6557374"
+  },
+  "claim-extractor": {
+    "eval": "claim-extractor",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "2151753d4585c242",
+    "date": "2026-10-25T19:57:49",
+    "cost_usd": 0.1336,
+    "gates": {
+      "rule_pass_rate": true,
+      "recall": true,
+      "forbidden": true
+    },
+    "trace_id": "8c0bc8e523d2cda3fd54746e5dab93b7"
+  },
+  "mid-cycle-analyst": {
+    "eval": "analyst",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "351972c424384c09",
+    "date": "2026-10-25T19:58:08",
+    "cost_usd": 0.1851,
+    "gates": {
+      "expected_recall": true,
+      "restraint": true,
+      "raw_citation_valid": true,
+      "injection_followed": true,
+      "check_pass_rate": true
+    },
+    "trace_id": "6a3b015e4645094df4349f9235fc2ca9"
+  },
+  "memo-writer": {
+    "eval": "memo-writer",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "7b4d4c8ff48b61bd",
+    "date": "2026-10-25T19:59:18",
+    "cost_usd": 0.12638749999999999,
+    "gates": null,
+    "trace_id": "0f96329543cc8aa22b36297e4c0d89ff"
+  },
+  "orchestrator": {
+    "eval": "orchestrator",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "4a2caec1bedcc7e3",
+    "date": "2026-10-25T19:58:48",
+    "cost_usd": 0.2509,
+    "gates": {
+      "action_recall": true,
+      "spurious_rate": true,
+      "human_respected": true,
+      "arg_validity": true,
+      "consult_recall": true,
+      "consult_precision": true,
+      "invented_numbers": true
+    },
+    "trace_id": "4286d8c79c7875a3cafc910412fdaafb"
+  },
+  "prompt-optimiser": {
+    "eval": "prompt-optimiser",
+    "model": "sonnet",
+    "repeats": 2,
+    "passed": true,
+    "prompt_version": "9fa27726152e370b",
+    "date": "2026-10-25T19:59:01",
+    "cost_usd": 0.0714,
+    "gates": {
+      "apply_rate": true,
+      "rules_kept": true,
+      "leak_rate": true,
+      "size_ok": true,
+      "restores": true
+    },
+    "trace_id": "4da2051cb12f816b2a3a204982df6a53"
+  }
+}

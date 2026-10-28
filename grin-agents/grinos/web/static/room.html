@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="grin-token" content="__GRIN_TOKEN__">
+<title>Grin Voice Room</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+  --accent: #2f5bd3; --live: #c2410c; --chip: #eef0f6; --warn-bg: #fff4d6; --warn: #7a5200;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141413; --panel: #1d1d1b; --text: #ecebe6; --muted: #9b9a93; --line: #33332f;
+          --accent: #7aa0ff; --live: #fb923c; --chip: #26272c; --warn-bg: #3a2f12; --warn: #f0cf7a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line);
+         background: var(--panel); }
+header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+header a { color: var(--accent); text-decoration: none; margin-left: auto; }
+main { max-width: 900px; margin: 0 auto; padding: 16px; }
+#banner { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tile { background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 14px; text-align: center;
+        transition: border-color .15s, transform .15s; }
+.tile .dot { width: 44px; height: 44px; border-radius: 50%; background: var(--chip); margin: 0 auto 8px;
+             display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); }
+.tile .name { font-weight: 600; font-size: 14px; }
+.tile .role { color: var(--muted); font-size: 12px; }
+.tile.speaking { border-color: var(--accent); transform: translateY(-2px); }
+.tile.speaking .dot { background: var(--accent); color: #fff; }
+.controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+#talk { border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 14px 22px;
+        border-radius: 99px; cursor: pointer; min-width: 190px; }
+#talk.rec { background: var(--live); }
+#talk:disabled { opacity: .5; cursor: default; }
+#state { color: var(--muted); font-size: 13px; }
+.textrow { display: flex; gap: 8px; margin-bottom: 16px; }
+.textrow input { flex: 1; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 8px; padding: 9px 11px; min-width: 0; }
+.textrow button { border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit;
+                  border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+#log { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-height: 120px; }
+.line { margin: 8px 0; } .line .who { font-weight: 600; font-size: 13px; } .line.me .who { color: var(--muted); }
+.cites { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<header><h1>Voice room</h1><a href="/">← Dashboard</a></header>
+<main>
+  <div id="banner"></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="controls">
+    <button id="talk">Hold to talk</button>
+    <span id="state">Checking VoiceStudio…</span>
+  </div>
+  <div class="textrow">
+    <input id="text" type="text" placeholder="Or type to the room (everyone can answer)…">
+    <button id="send">Send</button>
+  </div>
+  <div id="log"></div>
+</main>
+<script>
+const TOKEN = document.querySelector('meta[name="grin-token"]').content;
+const AGENTS = [
+  ['mid-cycle-analyst', 'Analyst', 'mid-cycle EBIT & multiple'],
+  ['verifier', 'Verifier', 'is it true to source?'],
+  ['decision-model', 'Decision', 'structural or cyclical?'],
+  ['config-auditor', 'Auditor', 'company configs'],
+  ['claim-extractor', 'Extractor', 'facts from filings'],
+];
+
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') n.className = v; else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined) n.append(k instanceof Node ? k : String(k));
+  return n;
+}
+
+const tiles = document.getElementById('tiles');
+for (const [id, name, role] of AGENTS)
+  tiles.append(el('div', {class: 'tile', 'data-agent': id}, el('div', {class: 'dot'}, name[0]),
+                  el('div', {class: 'name'}, name), el('div', {class: 'role'}, role)));
+
+const log = document.getElementById('log');
+const state = document.getElementById('state');
+const talk = document.getElementById('talk');
+const banner = document.getElementById('banner');
+
+function say(who, text, cites, me) {
+  log.append(el('div', {class: 'line' + (me ? ' me' : '')}, el('div', {class: 'who'}, who),
+    el('div', {style: 'white-space: pre-wrap'}, text),
+    cites && cites.length ? el('div', {class: 'cites'}, 'cites ' + cites.join(', ')) : null));
+  log.scrollTop = log.scrollHeight;
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function speaking(agent) {
+  document.querySelectorAll('.tile').forEach(t => t.classList.toggle('speaking', t.dataset.agent === agent));
+}
+
+function showBanner(msg) { banner.textContent = msg; banner.style.display = 'block'; }
+
+// Agents take turns: each reply is shown and (if audio exists) played before the next starts.
+async function playTurn(replies) {
+  for (const r of replies) {
+    speaking(r.agent);
+    say(r.agent, r.text, r.cites);
+    if (r.audio_url) {
+      await new Promise(res => {
+        const a = new Audio(r.audio_url);
+        a.onended = res; a.onerror = res;
+        a.play().catch(res);
+      });
+    } else {
+      await new Promise(res => setTimeout(res, 600));
+    }
+  }
+  speaking(null);
+}
+
+async function post(path, body, headers) {
+  const r = await fetch(path, {method: 'POST', headers: Object.assign({'X-Grin-Token': TOKEN}, headers), body});
+  const j = await r.json().catch(() => ({error: r.statusText}));
+  return {ok: r.ok, status: r.status, data: j};
+}
+
+async function sendText() {
+  const inp = document.getElementById('text');
+  const text = inp.value.trim(); if (!text) return; inp.value = '';
+  say('you', text, null, true);
+  state.textContent = 'Agents are thinking…';
+  const r = await post('/api/desk', JSON.stringify({text, conference: true}), {'Content-Type': 'application/json'});
+  if (!r.ok) { say('error', r.data.error || 'request failed'); state.textContent = ''; return; }
+  state.textContent = '';
+  await playTurn(r.data.replies);
+}
+document.getElementById('send').addEventListener('click', sendText);
+document.getElementById('text').addEventListener('keydown', e => e.key === 'Enter' && sendText());
+
+let recorder = null, chunks = [];
+async function startRec() {
+  if (recorder) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    recorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
+    chunks = [];
+    recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const type = (recorder.mimeType || 'audio/webm').split(';')[0];
+      recorder = null;
+      const blob = new Blob(chunks, {type});
+      talk.classList.remove('rec'); talk.textContent = 'Hold to talk'; talk.disabled = true;
+      state.textContent = 'Transcribing and thinking…';
+      const r = await post('/api/room/turn', blob, {'Content-Type': type});
+      talk.disabled = false; state.textContent = '';
+      if (r.status === 503) { showBanner((r.data.hint || '') + ' ' + (r.data.error || '')); return; }
+      if (!r.ok) { say('error', r.data.error || 'request failed'); return; }
+      if (!r.data.transcript) { state.textContent = 'Heard nothing — try again.'; return; }
+      say('you', r.data.transcript, null, true);
+      if (r.data.tts === false) showBanner('Voice output unavailable — replies shown as text.');
+      await playTurn(r.data.replies);
+    };
+    recorder.start();
+    talk.classList.add('rec'); talk.textContent = 'Listening… release to send';
+  } catch (e) { showBanner('Microphone unavailable: ' + e.message + '. Use the text box.'); }
+}
+function stopRec() { if (recorder && recorder.state === 'recording') recorder.stop(); }
+talk.addEventListener('pointerdown', e => { e.preventDefault(); startRec(); });
+talk.addEventListener('pointerup', stopRec);
+talk.addEventListener('pointerleave', stopRec);
+talk.addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat) { e.preventDefault(); startRec(); } });
+talk.addEventListener('keyup', e => { if (e.code === 'Space') stopRec(); });
+
+fetch('/api/voice').then(r => r.json()).then(v => {
+  if (v.available) { state.textContent = 'VoiceStudio connected.'; }
+  else {
+    state.textContent = 'Voice offline — text works.';
+    talk.disabled = true;
+    showBanner(`VoiceStudio isn't running at ${v.base}. Start the VoiceStudio app (its backend listens on port 3900) to talk; reload this page after. The text box works meanwhile.`);
+  }
+}).catch(() => { state.textContent = 'Could not check VoiceStudio.'; });
+</script>
+</body>
+</html>

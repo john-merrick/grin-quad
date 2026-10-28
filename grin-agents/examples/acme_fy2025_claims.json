@@ -1,0 +1,17 @@
+[
+  {"metric": "revenue", "period": "FY2025", "value": 1000.0, "unit": "usd_m",
+   "quote": "Net sales for fiscal 2025 were $1,000.0 million, an increase of 4.2% from $959.7 million in fiscal 2024.",
+   "statement": "ACME FY2025 revenue was $1,000.0M."},
+  {"metric": "gross_margin", "period": "FY2025", "value": 0.312, "unit": "pct",
+   "quote": "Adjusted gross margin, excluding the LIFO charge, was 31.2%.",
+   "statement": "ACME FY2025 gross margin was 31.2%."},
+  {"metric": "other", "period": "FY2025", "value": 12.0, "unit": "usd_m",
+   "quote": "partly offset by a $12.0 million LIFO charge",
+   "statement": "FY2025 gross profit was reduced by a one-off $12.0M LIFO charge."},
+  {"metric": "revenue", "period": "FY2025", "value": 1050.0, "unit": "usd_m",
+   "quote": "Net sales for fiscal 2025 were a record $1,050.0 million.",
+   "statement": "ACME FY2025 revenue was $1,050.0M."},
+  {"metric": "guidance_revenue", "period": "FY2026", "value": 1040.0, "unit": "usd_m",
+   "quote": "For fiscal 2026 we expect net sales of $1,040 million to $1,060 million.",
+   "statement": "ACME guides FY2026 revenue to $1,040-1,060M (low end $1,040M)."}
+]

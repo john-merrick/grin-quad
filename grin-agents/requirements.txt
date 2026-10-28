@@ -1,0 +1,5 @@
+# Runtime extras for grin-agents (it runs from ../val-machine/.venv):
+#   ../val-machine/.venv/bin/python -m pip install -r requirements.txt
+# Temporal: agents and workflows run as Temporal activities/workflows when the local server is up
+# (services/install.sh --temporal); without it, everything still runs inline.
+temporalio==1.34.0

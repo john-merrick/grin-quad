@@ -1,0 +1,1 @@
+../../grin-agents/agents/config-auditor.md

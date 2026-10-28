@@ -121,6 +121,14 @@ distval value POOL --net-debt 1469 --shares-diluted 39.5 --price 335 --as-of 202
 
 ---
 
+### FCFF / WACC scenarios (`distval/fcff.py`)
+
+A second, pure model beside `engine.py`: five-year FCFF (EBIT × (1 − tax) − net capex − ΔNWC),
+discounted at a build-up WACC, with a Gordon-growth terminal value (rejected unless g < WACC), an
+equity bridge (debt, cash, preferred, minority interest, other claims, diluted shares), a WACC ×
+terminal-growth grid, and a bounded reverse DCF. It is driven by the evidence-linked valuation
+workflow in `grin-agents` (`grinos value`), which supplies point-in-time SEC XBRL facts with provenance.
+
 ## Adding a company
 
 1. Run `distval ingest` and `distval normalise` to anchor the mid-cycle figures.
