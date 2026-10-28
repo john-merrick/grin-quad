@@ -34,7 +34,7 @@ import yaml
 from pydantic import BaseModel, field_validator
 
 from distval import fcff
-from grinos import sec, xbrl
+from grinos import sec, steps, xbrl
 from grinos.ledger import Ledger
 from grinos.llm import agent_actor
 from grinos.schemas import Actor, canonical, sha256
@@ -43,6 +43,7 @@ STEPS = ["resolve", "retrieve", "reconcile", "adjustments", "evidence", "forecas
          "sensitivity", "validate", "memo"]
 SYSTEM = Actor(kind="rule", name="valuation",
                version=sha256(Path(__file__).read_bytes())[:16])
+MACHINE = steps.Machine("valuation", STEPS, lambda step, ctx: {"status": "done", "output": {}}, SYSTEM)
 # SIC division H (6000–6799): banks, credit, brokers, insurers, real estate and holding companies.
 FINANCIAL_SIC = range(6000, 6800)
 ADJ_MATERIALITY = Decimal("0.005")      # one-off charges under 0.5% of operating income aren't proposed
@@ -179,35 +180,14 @@ def resume(ledger: Ledger, run_id: str, narrate=None) -> dict:
     snap = next(e["payload"] for e in reversed(list(ledger.entries())) if e["stage"] == "sec_snapshot"
                 and e["payload"]["version"] == req["payload"]["snapshot_version"])
     ctx = Ctx(ledger, run_id, request, snap)
-    last: dict[str, dict] = {}
-    prev_status = None
-    for e in ledger.entries():
-        if e["run_id"] == run_id and e["stage"] == "valuation_status":
-            prev_status = e["payload"]
-        if e["run_id"] == run_id and e["stage"] == "valuation_decision":
-            ctx.decisions.setdefault(e["payload"]["target"], e["payload"])      # first decision is final
-        if e["run_id"] == run_id and e["stage"] == "valuation_step":
-            last[e["payload"]["step"]] = e["payload"]
-    status = "running"
-    for step in STEPS:
+    st = steps.state(MACHINE, ledger, run_id)
+    ctx.decisions = st.decisions
+
+    def run(step: str, c: Ctx) -> dict:
         fn = globals()[f"step_{step}"]
-        result = fn(ctx, narrate) if step == "memo" else fn(ctx)
-        ctx.out[step] = result["output"]
-        body = xbrl.to_jsonable({"step": step, "status": result["status"], "output": result["output"],
-                                 "blocking": result.get("blocking", [])})
-        digest = sha256(canonical(body).encode())
-        if last.get(step, {}).get("digest") != digest:                       # checkpoint: append on change
-            ledger.append(run_id, "valuation_step", SYSTEM, body | {"digest": digest})
-        if result["status"] != "done":
-            status = result["status"]
-            break
-    else:
-        status = "complete"
-    state = {"status": status, "step": step, "blocking": [i["id"] for i in result.get("blocking", [])]}
-    if prev_status != state:
-        ledger.append(run_id, "valuation_status", SYSTEM, state)
-    return {"run_id": run_id, "status": status, "step": step, "blocking": result.get("blocking", []),
-            "out": ctx.out}
+        return fn(c, narrate) if step == "memo" else fn(c)
+    machine = steps.Machine(MACHINE.prefix, MACHINE.steps, run, MACHINE.actor)
+    return steps.advance(machine, ledger, run_id, ctx, st, ctx.out)
 
 
 def _done(output, **kw) -> dict:

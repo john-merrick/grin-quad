@@ -13,6 +13,7 @@ from grinos.notion import NotPublishable
 from grinos.pipeline import ingest
 from grinos.proposals import analyse, decide_proposal
 from grinos.tests import sec_fixture as F
+from grinos.tests.review_helpers import confirm_all
 
 ROOT = Path(__file__).parents[2]
 CONFIG = yaml.safe_load((ROOT / "evals/config-auditor/cases/clean_base/acme.yaml").read_text())
@@ -44,6 +45,13 @@ class FakeNotion:
             title = body["filter"]["title"]["equals"]
             return {"results": [{"id": i} for i, p in self.pages.items()
                                 if p["properties"].get("Title", {}).get("title", [{}])[0].get("text", {}).get("content") == title]}
+        if path.endswith("/query") and DS_of(path) in ("risks", "catalysts"):
+            want = [f for f in body["filter"]["and"] if f["property"] in ("Risk", "Type")][0]
+            key, val = want["property"], (want.get("title") or want.get("select"))["equals"]
+            return {"results": [{"id": i} for i, p in self.pages.items()
+                                if p["parent"]["data_source_id"] == LG.DS[DS_of(path)]
+                                and (p["properties"].get(key, {}).get("title", [{}])[0].get("text", {}).get("content") == val
+                                     or (p["properties"].get(key, {}).get("select") or {}).get("name") == val)]}
         if path.endswith("/query") and DS_of(path) == "tasks":
             title = body["filter"]["title"]["equals"]
             return {"results": [{"id": i} for i, p in self.pages.items()
@@ -247,6 +255,7 @@ def test_an_approved_proposal_syncs_through_the_same_contract(ledger, monkeypatc
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
     with pytest.raises(NotPublishable, match="not been approved"):
         LG.prepare(ledger, "sync", pid, token="t", request=FakeNotion(acme()))
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "private label is structural")
     p = LG.prepare(ledger, "sync", pid, token="t", request=FakeNotion(acme()))
     assert p["plan"]["changed"]["Sustainable EBIT"][1] == pytest.approx(146.4)
@@ -330,6 +339,7 @@ def test_a_runs_approved_proposals_sync_together_not_one_by_one(ledger, monkeypa
     run = res["run_id"]
     ebit, margin = (r["proposal_id"] for r in res["proposals"])
     for pid in (ebit, margin):
+        confirm_all(ledger, pid)
         decide_proposal(ledger, pid, "approve", "isaac", "agree")
     with pytest.raises(NotPublishable, match=f"grinos capture sync {run}"):
         LG.prepare(ledger, "sync", ebit, token="t", request=FakeNotion(acme()))
@@ -340,3 +350,59 @@ def test_a_runs_approved_proposals_sync_together_not_one_by_one(ledger, monkeypa
     assert p["drivers"]["Sustainable EBIT"] == pytest.approx(146.4)                      # the EBIT proposal …
     assert p["drivers"]["EBIT FY1"] == pytest.approx(round(alone[margin]["after"]["ebit_path"][0], 4))  # … and the margin one
     assert sorted(p["drivers"]["_proposals"]) == sorted([ebit, margin])
+
+
+def _complete_coverage(tmp_path):
+    from grinos import coverage as C
+    from grinos.tests.test_coverage import ACME, AS_OF
+    cfg = tmp_path / "acme.yaml"
+    cfg.write_text(ACME.read_text())
+    L = Ledger(tmp_path / "cov")
+    run = C.start(L, "ACME", AS_OF, str(cfg), sec.fixture_getter(F.responses()), who="isaac")["run_id"]
+    C.decide(L, run, "s_confirm", "accept", "isaac", "")
+    for b in C.resume(L, run)["blocking"]:
+        C.decide(L, run, b["id"], "accept", "isaac", "")
+    C.resume(L, run)
+    for k, v in {"s_bear_ebit": 85, "s_bull_ebit": 125, "s_bear_multiple": 8, "s_bull_multiple": 16}.items():
+        C.decide(L, run, k, "value", "isaac", "mine", value=v)
+    C.decide(L, run, "s_probs", "accept", "isaac", "")
+    C.resume(L, run)
+    for risk in ("Customer concentration", "Private label erosion", "Freight inflation"):
+        C.record_risk(L, "ACME", risk, 3, 4, "gross margin below 28% for 4 quarters", "isaac", nature="Structural")
+    C.record_catalyst(L, "ACME", "Q3 FY2026", "2026-10-28", "isaac")
+    C.decide(L, run, "k_direction", "value", "isaac", "x", text="Long")
+    C.decide(L, run, "k_nature", "value", "isaac", "x", text="Structural")
+    assert C.resume(L, run)["status"] == "complete"
+    return L, run
+
+
+def test_a_coverage_run_syncs_all_three_scenarios_through_the_model_sync_contract(tmp_path):
+    L, run = _complete_coverage(tmp_path)
+    assert {x["id"] for x in LG.pending(L)} >= {f"lg_sync_{run}", f"lg_risks_{run}"}
+    p = LG.prepare(L, "sync", run, token="t", request=FakeNotion(acme()), today="2026-07-01")
+    assert {"EBIT FY2 Bear", "EBIT FY2 Bull", "Target Multiple Bear", "Prob Base"} <= set(p["plan"]["changed"])
+    v = C_view(L, run)
+    assert p["plan"]["pw_after"] == pytest.approx(v["pw_target"], rel=1e-3)
+
+
+def C_view(L, run):
+    from grinos import coverage as C
+    return C.view(L, run)["steps"]["valuation"]["output"]
+
+
+def test_risks_and_catalysts_push_as_the_humans_entries_and_search_before_create(tmp_path):
+    L, run = _complete_coverage(tmp_path)
+    fake = FakeNotion(acme())
+    fake.pages["old-risk"] = {"parent": {"data_source_id": LG.DS["risks"]},
+                              "properties": {"Risk": {"title": [{"text": {"content": "Freight inflation"}}]}}}
+    p = LG.prepare(L, "risks", run, token="t", request=fake)
+    assert "Freight inflation" in LG.describe(p) and "L3 × I4" in LG.describe(p)
+    out = LG.push(L, f"lg_risks_{run}", token="t", request=fake)
+    assert len(out["risks"]) == 3 and sum(r["updated"] for r in out["risks"]) == 1
+    rows = [r for r in fake.created("risks") if r is not fake.pages["old-risk"]]
+    assert len(rows) == 2 and fake.patches("old-risk") and all(r["properties"]["Author"] == {"select": {"name": "Human"}} for r in rows)
+    assert rows[0]["properties"]["Likelihood"] == {"number": 3} and "rich_text" in rows[0]["properties"]["Kill Criterion"]
+    (cat,) = fake.created("catalysts")
+    assert cat["properties"]["Event"]["title"][0]["text"]["content"] == "ACME · Results · Q3 FY2026"
+    assert cat["properties"]["Status"] == {"select": {"name": "Pending"}}
+    assert not fake.patches("co-acme")                                               # never Companies

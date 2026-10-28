@@ -16,13 +16,15 @@ import secrets
 import socketserver
 import sys
 import threading
+from datetime import date
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
+from urllib.parse import parse_qs, urlsplit
 
-from grinos import longgamma, notion, valuation, voice
-from grinos.desk import Desk
+from grinos import coverage, longgamma, notion, review, runtime, sec, trace, valuation, voice
+from grinos.desk import COMPANIES_DIR, Desk
 from grinos.ledger import Ledger
 from grinos.pipeline import human_verdict
 from grinos.proposals import PAST, decide_proposal, pending, proposal_state
@@ -124,6 +126,19 @@ def proposal_view(s: dict) -> dict:
             "nature": p["proposal"].get("nature"), "rationale": p["proposal"]["rationale"],
             "cites": p["proposal"]["cites"], "status": status, "problems": c.get("problems", []),
             "ev_change_pct": imp.get("ev_change_pct"), "ts": s["proposal"]["ts"]}
+
+
+def ops_view() -> dict:
+    """Agent cost, latency, failures and tokens per prompt version, from the local traces."""
+    from datetime import UTC, datetime, timedelta
+    recs = trace.read(days=30)
+    since7 = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    host = trace.langfuse_config()[0]
+    project = os.environ.get("LANGFUSE_PROJECT_ID") or (trace.local_langfuse() or {}).get("LANGFUSE_INIT_PROJECT_ID")
+    errors = [{"name": r["name"], "start": r["start"], "status": r.get("status"), "trace_id": r["trace_id"]}
+              for r in recs if r.get("level") == "ERROR"][-20:]
+    return {"last_7_days": trace.ops(recs, since7), "last_30_days": trace.ops(recs), "errors": errors,
+            "trace_url": f"{host.rstrip('/')}/project/{project}/traces/" if host and project else None}
 
 
 def evals_view() -> list[dict]:
@@ -236,6 +251,21 @@ def make_handler(app: App):
                                        "claims": needs_human(L)})
                 if path == "/api/proposals":
                     return self._json([proposal_view(s) for s in proposal_state(L).values() if s["proposal"]])
+                if m := re.fullmatch(r"/api/proposal/(p_[0-9a-f]{10})", path):
+                    return self._json(review.proposal_detail(L, m[1]))
+                if m := re.fullmatch(r"/api/claim/(c_[0-9a-f]{12})", path):
+                    q = parse_qs(urlsplit(self.path).query)
+                    return self._json(review.claim_detail(review.Index(L), m[1], (q.get("context") or [None])[0],
+                                                          int((q.get("match") or ["0"])[0])))
+                if m := re.fullmatch(r"/api/source/([0-9a-f]{64})", path):
+                    q = parse_qs(urlsplit(self.path).query)
+                    start = int((q.get("start") or ["0"])[0])
+                    end = int(q["end"][0]) if q.get("end") else None
+                    try:
+                        text = review.source_text(L, m[1], start, end)
+                    except KeyError:
+                        return self._error(404, "no such source")
+                    return self._send(200, text.encode(), "text/plain; charset=utf-8")
                 if path == "/api/audit":
                     problems = L.audit()
                     return self._json({"ok": not problems, "n": sum(1 for _ in L.entries()), "problems": problems})
@@ -243,6 +273,20 @@ def make_handler(app: App):
                     return self._json(to_jsonable(valuation.runs(L)))
                 if m := re.fullmatch(r"/api/valuation/(val_[\w.\-]+)", path):
                     return self._json(to_jsonable(valuation.view(L, m[1])))
+                if path == "/api/ops":
+                    return self._json(ops_view())
+                if path == "/api/coverage":
+                    return self._json(to_jsonable(coverage.runs(L)))
+                if m := re.fullmatch(r"/api/coverage/(cov_[\w.\-]+)", path):
+                    return self._json(to_jsonable(coverage.view(L, m[1])))
+                if path == "/api/promotions":
+                    from grinos import improve
+                    return self._json([improve.promotion_view(L, p) for p in improve.promotions(L)])
+                if path == "/api/eval_history":
+                    hist = EVALS / "history.jsonl"
+                    rows = [json.loads(x) for x in hist.read_text().splitlines()] if hist.exists() else []
+                    return self._json([{k: r.get(k) for k in ("agent", "prompt_version", "date", "passed", "cost_usd",
+                                                               "metrics")} for r in rows[-400:]])
                 if path == "/api/evals":
                     return self._json(evals_view())
                 if path == "/api/voice":
@@ -253,6 +297,8 @@ def make_handler(app: App):
                         return self._error(404, "no such audio")
                     return self._send(200, L.get_blob(sha), "audio/mpeg")
                 return self._error(404, "not found")
+            except KeyError as exc:
+                return self._error(404, str(exc).strip("'\""))
             except Exception as exc:  # never leak a traceback page
                 return self._error(500, f"{type(exc).__name__}: {exc}")
 
@@ -274,7 +320,86 @@ def make_handler(app: App):
                         raise ValueError("a note is required")
                     decision = "approve" if path.endswith("approve") else "reject"
                     e = decide_proposal(L, pid, decision, app.user, note, channel="dashboard")
+                    runtime.changed(L, proposal_state(L)[pid]["proposal"]["run_id"])
                     return self._json({"ok": True, "seq": e["seq"], "hash": e["hash"]})
+                if path == "/api/review":
+                    e = review.record_review(L, str(data.get("target_kind", "claim")), str(data.get("target_id", "")),
+                                             str(data.get("context_id", "")), str(data.get("decision", "")), app.user,
+                                             str(data.get("note", "")), channel="dashboard",
+                                             reject_claim=bool(data.get("reject_claim")))
+                    return self._json({"ok": True, "seq": e["seq"]})
+                if path == "/api/feedback":
+                    e = review.record_feedback(L, str(data.get("target_kind", "")), str(data.get("target_id", "")),
+                                               str(data.get("kind", "perspective")), str(data.get("text", "")),
+                                               app.user, company=data.get("company"), agent=data.get("agent"),
+                                               channel="dashboard")
+                    return self._json({"ok": True, "seq": e["seq"]})
+                if path == "/api/coverage/start":
+                    t = str(data.get("ticker", "")).upper().strip()
+                    if not re.fullmatch(r"[A-Z.\-]{1,10}", t):
+                        raise ValueError("a ticker is required")
+                    cfg = str(data.get("config_path") or (COMPANIES_DIR / f"{t.lower()}.yaml"))
+                    if not Path(cfg).exists():
+                        raise ValueError(f"no company config at {cfg}")
+                    as_of = date.fromisoformat(str(data.get("as_of") or date.today().isoformat()))
+                    with app.lock:
+                        rr = runtime.coverage(L, t, as_of, cfg, sec.http_get, app.user,
+                                              notify={"channel": "dashboard", "thread": "dashboard:main"})
+                    if rr["via"] == "temporal":
+                        return self._json({"ok": True, "run_id": rr["workflow_id"], "status": "started on Temporal",
+                                           "step": "sources"})
+                    r = rr["result"]
+                    return self._json({"ok": True, "run_id": r["run_id"], "status": r["status"], "step": r["step"]})
+                if path == "/api/coverage/decide":
+                    run_id, value = str(data.get("run_id", "")), data.get("value")
+                    coverage.decide(L, run_id, str(data.get("target", "")), str(data.get("decision", "")), app.user,
+                                    str(data.get("note", "")), Decimal(str(value)) if value not in (None, "") else None,
+                                    text=data.get("text"), channel="dashboard", revise=bool(data.get("revise")))
+                    runtime.changed(L, run_id)
+                    with app.lock:
+                        r = coverage.resume(L, run_id)
+                    return self._json({"ok": True, "status": r["status"], "step": r["step"]})
+                if path == "/api/coverage/resume":
+                    with app.lock:
+                        r = coverage.resume(L, str(data.get("run_id", "")))
+                    return self._json({"ok": True, "status": r["status"], "step": r["step"]})
+                if path == "/api/coverage/risk":
+                    e = coverage.record_risk(L, str(data.get("ticker", "")), str(data.get("risk", "")),
+                                             int(data.get("likelihood") or 0), int(data.get("impact") or 0),
+                                             str(data.get("kill_criterion", "")), app.user,
+                                             status=str(data.get("status") or "Active"), nature=data.get("nature") or None,
+                                             cites=[c for c in data.get("cites") or [] if isinstance(c, str)],
+                                             channel="dashboard")
+                    return self._json({"ok": True, "risk_id": e["payload"]["risk_id"]})
+                if path == "/api/coverage/catalyst":
+                    e = coverage.record_catalyst(L, str(data.get("ticker", "")), str(data.get("event", "")),
+                                                 str(data.get("date", "")), app.user, type_=str(data.get("type") or "Results"),
+                                                 date_confidence=str(data.get("date_confidence") or "Window"),
+                                                 channel="dashboard")
+                    return self._json({"ok": True, "catalyst_id": e["payload"]["catalyst_id"]})
+                if path == "/api/coverage/stage":
+                    e = coverage.set_stage(L, str(data.get("ticker", "")), str(data.get("stage", "")), app.user,
+                                           str(data.get("note", "")), channel="dashboard")
+                    return self._json({"ok": True, "to": e["payload"]["to"]})
+                if path == "/api/coverage/capture":
+                    kind, run_id = str(data.get("kind", "")), str(data.get("run_id", ""))
+                    if kind not in ("sync", "risks"):
+                        raise ValueError("kind is sync or risks")
+                    try:
+                        p = longgamma.prepare(L, kind, run_id)
+                        nxt = (f"/go lg_sync_{run_id} <your rationale>, then /capture push lg_sync_{run_id}"
+                               if kind == "sync" else f"/capture push lg_risks_{run_id}")
+                        return self._json({"ok": True, "message": longgamma.describe(p) + "\nNext, in Desk: " + nxt})
+                    except notion.NotPublishable as exc:
+                        return self._json({"ok": True, "message": str(exc)})
+                if path == "/api/promote":
+                    from grinos import improve
+                    pid, decision = str(data.get("promotion_id", "")), str(data.get("decision", ""))
+                    improve.decide_promotion(L, pid, decision, app.user, str(data.get("note", "")), channel="dashboard")
+                    sel = next(e for e in L.entries() if e["stage"] == "prompt_selected"
+                               and e["payload"]["promotion_id"] == pid)
+                    runtime.changed(L, sel["run_id"])
+                    return self._json({"ok": True})
                 if path == "/api/resolve":
                     cid, verdict = str(data.get("claim_id", "")), data.get("verdict")
                     note = str(data.get("note", "")).strip()
@@ -301,6 +426,7 @@ def make_handler(app: App):
                     value = data.get("value")
                     valuation.decide(L, run_id, str(data.get("target", "")), str(data.get("decision", "")), app.user,
                                      note, Decimal(str(value)) if value not in (None, "") else None, channel="dashboard")
+                    runtime.changed(L, run_id)
                     with app.lock:
                         r = valuation.resume(L, run_id)
                     return self._json({"ok": True, "status": r["status"], "step": r["step"]})

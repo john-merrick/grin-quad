@@ -23,10 +23,25 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
+from grinos import trace
 from grinos.schemas import Actor, canonical, sha256
 
 GENESIS = "0" * 64
 DEFAULT_KEY = Path.home() / ".config" / "grinos" / "ledger.key"
+
+
+class _Exists(Exception):
+    pass
+
+
+def _find_idem(lines: list[str], idem: str) -> dict | None:
+    needle = canonical({"idem": idem})[1:-1]      # '"idem":"…"' as canonical() writes it
+    for ln in lines:
+        if needle in ln:
+            e = json.loads(ln)
+            if e["payload"].get("idem") == idem:
+                return e
+    return None
 
 
 class LedgerCorrupt(RuntimeError):
@@ -105,13 +120,43 @@ class Ledger:
         as the write. Closes check-then-act races between the CLI, dashboard and Telegram.
         A guard that returns a string aborts with ValueError(that string).
         """
-        with self.path.open("r+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        def check(lines: list[str]) -> None:
             if guard is not None:
                 problem = guard([json.loads(ln) for ln in lines])
                 if problem:
                     raise ValueError(problem)
+        return self._locked(run_id, stage, actor, payload, refs, check)
+
+    def append_once(self, run_id: str, stage: str, actor: Actor, payload: dict, idem: str,
+                    refs: list[str] | None = None) -> tuple[dict, bool]:
+        """
+        Append unless an entry with this idempotency key already exists; returns (entry, created).
+        Checked under the write lock, so a retried activity (Temporal) or a double click can't write twice.
+        """
+        found: list[dict] = []
+
+        def check(lines: list[str]) -> None:
+            hit = _find_idem(lines, idem)
+            if hit is not None:
+                found.append(hit)
+                raise _Exists()
+        try:
+            return self._locked(run_id, stage, actor, payload | {"idem": idem}, refs, check), True
+        except _Exists:
+            return found[0], False
+
+    def find_idem(self, idem: str) -> dict | None:
+        with self.path.open() as fh:
+            fcntl.flock(fh, fcntl.LOCK_SH)
+            lines = fh.read().splitlines()
+        return _find_idem(lines, idem)
+
+    def _locked(self, run_id: str, stage: str, actor: Actor, payload: dict, refs: list[str] | None,
+                check: Callable[[list[str]], None]) -> dict:
+        with self.path.open("r+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+            check(lines)
             last = json.loads(lines[-1]) if lines else None
             entry = {
                 "seq": (last["seq"] + 1) if last else 0,
@@ -123,6 +168,9 @@ class Ledger:
                 "payload": payload,
                 "prev": last["hash"] if last else GENESIS,
             }
+            ids = trace.current_ids()
+            if ids:
+                entry["trace_id"] = ids["trace_id"]   # links the entry to its trace (covered by the hash)
             entry["hash"] = entry_hash(entry)
             entry["mac"] = self._mac(entry["hash"])
             fh.write(canonical(entry) + "\n")

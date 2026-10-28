@@ -23,13 +23,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from grinos import voice
 from grinos.desk import COMPANIES_DIR, Desk
 from grinos.env import secret
 from grinos.ledger import Ledger
-from grinos.pipeline import ingest
 from grinos.schemas import Actor
 
 API = "https://api.telegram.org"
@@ -37,6 +34,7 @@ MAX_LEN = 4000
 MAX_DOC_BYTES = 2_000_000   # a text filing larger than this is unbounded LLM spend; send an extract
 SYSTEM = Actor(kind="system", name="telegram", version="1")
 LABELS = {
+    "orchestrator": "🗂 Grin:",
     "mid-cycle-analyst": "🧮 Analyst:", "verifier": "🔎 Verifier:", "decision-model": "🧭 Decision:",
     "config-auditor": "📋 Auditor:", "claim-extractor": "📑 Extractor:", "system": "⚙️",
 }
@@ -263,13 +261,18 @@ class Bot:
         meta = {"uri": f"telegram://{chat_id}/{doc.get('file_name', doc['file_id'])}", "kind": kind,
                 "company": ticker, "published_at": pub}
         cfg = COMPANIES_DIR / f"{ticker.lower()}.yaml"
-        config = yaml.safe_load(cfg.read_text()) if cfg.exists() else None
         self.api.send_message(chat_id, f"⚙️ ingesting {doc.get('file_name', 'file')} for {ticker}… "
                                        "(extract → decide → verify; I'll post the summary)")
 
         def work():
             try:
-                s = ingest(self.ledger, data, meta, None, as_of, config, model=self.model)
+                from grinos import runtime
+                r = runtime.ingest(self.ledger, data, meta, None, as_of, str(cfg) if cfg.exists() else None,
+                                   model=self.model, wait=False,
+                                   notify={"channel": "telegram", "target": chat_id, "thread": f"telegram:{chat_id}"})
+                if r["via"] == "temporal":
+                    return                                   # the workflow posts the summary when it finishes
+                s = r["result"]
                 v = [c["verdict"] for c in s["claims"]]
                 text = (f"⚙️ {s['run_id']}: {len(v)} claims — verified {v.count('verified')}, "
                         f"rejected {v.count('rejected')}, needs_human {v.count('needs_human')}, "

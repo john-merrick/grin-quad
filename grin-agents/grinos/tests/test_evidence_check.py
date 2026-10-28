@@ -1,8 +1,10 @@
 from datetime import date
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
-from grinos.evidence_check import check_claim, normalise, numbers_in
+from grinos.evidence_check import check_claim, context_window, locate, normalise, normalise_with_map, numbers_in
 from grinos.schemas import Claim, Source
 
 TEXT = ("Net sales for fiscal 2025 were $1,000.0 million, up 4.2%.\n"
@@ -93,3 +95,49 @@ def test_opposite_sign_warns_for_the_verifier_instead_of_rejecting():
     assert r["rules_verdict"] == "pass" and _failed(r) == {"sign_differs"}
     r = check_claim(_claim(quote="Operating loss was ($5.0) million.", value=6.0), SRC, TEXT, date(2026, 3, 1))
     assert r["rules_verdict"] == "rejected"
+
+
+# --- locate: exact raw spans for highlighting --------------------------------------------------
+
+ALPHABET = st.sampled_from(list("ab Z9|$%().,\n\t") + [" ", "’", "“", "–", "−",
+                                                       "ß", "ﬁ", "…", "  "])
+
+
+@settings(max_examples=300, deadline=None)
+@given(st.lists(ALPHABET, max_size=60).map("".join))
+def test_normalise_with_map_matches_normalise(text):
+    norm, idx = normalise_with_map(text)
+    assert norm == normalise(text) and len(idx) == len(norm)
+    assert idx == sorted(idx) and all(0 <= i < len(text) for i in idx)
+
+
+@settings(max_examples=300, deadline=None)
+@given(st.lists(ALPHABET, min_size=1, max_size=40).map("".join), st.integers(0, 40), st.integers(1, 20))
+def test_located_span_normalises_to_the_quote(text, start, length):
+    quote = text[start: start + length]
+    if not normalise(quote):
+        return
+    spans = locate(text, quote)
+    assert spans and all(normalise(text[s:e]) == normalise(quote) for s, e in spans)
+
+
+def test_locate_finds_a_quote_across_reflowed_whitespace_and_typography():
+    raw = "Net sales   for fiscal\n2025 were $1,000.0 million — a record. SG&A | $ 3,931 | 23.8%"
+    (s, e), = locate(raw, "net sales for fiscal 2025 were $1,000.0 million - a record")
+    assert raw[s:e] == "Net sales   for fiscal\n2025 were $1,000.0 million — a record"
+    (s, e), = locate(raw, "SG&A | $ 3,931 | 23.8%")
+    assert raw[s:e] == "SG&A | $ 3,931 | 23.8%"
+    assert locate(raw, "not in the source") == []
+    assert len(locate("x 1 x 1 x", "x 1")) == 2
+
+
+def test_locate_falls_back_when_nfkc_composes_across_characters():
+    raw = "Caf" + "é revenue was $5 million."          # e + combining acute composes to é
+    (s, e), = locate(raw, "café revenue was $5 million")
+    assert normalise(raw[s:e]) == normalise("café revenue was $5 million")
+
+
+def test_context_window_is_centred_on_the_exact_match():
+    raw = ("filler " * 1000) + "The quoted sentence." + (" tail" * 1000)
+    w = context_window(raw, "the  quoted sentence.", chars=50)
+    assert "The quoted sentence." in w and len(w) <= 50 * 2 + len("The quoted sentence.")

@@ -50,6 +50,8 @@ def grade_case(case: dict, output: dict | None) -> dict:
     else:
         res["caught"] = bool(planted & named)
         res["verdict_ok"] = bool(output) and output.get("verdict") == "fail"
+    res["case_pass"] = res["verdict_ok"] and (
+        not res["false_alarm"] if kind == "clean" else not res["missed"] if kind == "real" else res["caught"])
     return res
 
 

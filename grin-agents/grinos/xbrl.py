@@ -162,11 +162,11 @@ def _non_usd(ix: _Index, formulas) -> set[str]:
     return {u for f in formulas for c in f for u in ix.units(c) if u != "USD"}
 
 
-def reconcile(snapshot: dict, cik: int) -> dict:
+def reconcile(snapshot: dict, cik: int, history_years: int = HISTORY_YEARS) -> dict:
     ix = _Index(snapshot, cik)
     review: list[dict] = []
 
-    # Fiscal years: annual revenue periods, latest HISTORY_YEARS by end date.
+    # Fiscal years: annual revenue periods, the latest `history_years` by end date.
     annual_keys = set()
     for f in FLOWS["revenue"]:
         for r in ix.units(f[0]).get("USD", []):
@@ -175,7 +175,7 @@ def reconcile(snapshot: dict, cik: int) -> dict:
     by_end = {}
     for k in sorted(annual_keys):
         by_end[k[1]] = k                                     # one period per fiscal-year end
-    years = [by_end[e] for e in sorted(by_end)[-HISTORY_YEARS:]]
+    years = [by_end[e] for e in sorted(by_end)[-history_years:]]
 
     annual = []
     for key in years:

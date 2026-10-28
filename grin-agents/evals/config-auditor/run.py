@@ -21,13 +21,13 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-
+sys.path.insert(0, str(HERE.parent))
+from common import results_dir  # noqa: E402
 from config_facts import config_facts  # noqa: E402
 from grade import grade_case, summarise  # noqa: E402
 
@@ -98,8 +98,7 @@ def main() -> int:
     manifest = json.loads((HERE / "cases" / "manifest.json").read_text())
     cases = [c for c in manifest if args.only in c["id"]]
     model = args.model if args.system == "agent" else "none"
-    out_dir = HERE / "results" / f"{datetime.now():%Y%m%d-%H%M%S}_{args.system}_{model}"
-    out_dir.mkdir(parents=True)
+    out_dir = results_dir(HERE, args.system, model)
     system_prompt = agent_prompt()
 
     def one(job):

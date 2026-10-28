@@ -32,7 +32,7 @@ from pathlib import Path
 
 from grinos.ledger import Ledger
 
-VERSION = 3
+VERSION = 4
 SCHEMA = """
 CREATE TABLE meta  (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE nodes (id TEXT PRIMARY KEY, type TEXT, company TEXT, label TEXT, props TEXT);
@@ -89,6 +89,7 @@ def project(ledger: Ledger) -> dict:
     sources: dict[str, dict] = {}
     claims: dict[str, dict] = {}
     latest_steps: dict[str, dict] = {}
+    coverage_steps: dict[str, dict] = {}
     for e in entries:
         p, st = e["payload"], e["stage"]
         if st == "source":
@@ -165,10 +166,68 @@ def project(ledger: Ledger) -> dict:
         elif st == "valuation_step" and f"valuation:{e['run_id']}" in nodes:
             vid = f"valuation:{e['run_id']}"
             latest_steps.setdefault(vid, {})[p["step"]] = p
+        elif st == "coverage_request":
+            cid = f"coverage:{e['run_id']}"
+            node(f"company:{p['ticker']}", "company", p["ticker"], p["ticker"])
+            node(cid, "coverage", p["ticker"], f"{p['ticker']} coverage as of {p['as_of']}", as_of=p["as_of"],
+                 seq=e["seq"], status="started", decisions=[])
+            edges.append((cid, "ABOUT", f"company:{p['ticker']}", {}))
+            if p.get("supersedes"):
+                edges.append((cid, "SUPERSEDES", f"coverage:{p['supersedes']}", {}))
+        elif st == "coverage_status" and f"coverage:{e['run_id']}" in nodes:
+            nodes[f"coverage:{e['run_id']}"]["props"].update(status=p["status"], step=p["step"], blocking=p["blocking"])
+        elif st == "coverage_decision" and f"coverage:{e['run_id']}" in nodes:
+            nodes[f"coverage:{e['run_id']}"]["props"]["decisions"].append(
+                {k: p.get(k) for k in ("target", "kind", "decision", "note", "by", "value", "text", "revises")}
+                | {"seq": e["seq"], "ts": e["ts"]})
+        elif st == "coverage_step" and f"coverage:{e['run_id']}" in nodes:
+            coverage_steps.setdefault(f"coverage:{e['run_id']}", {})[p["step"]] = p
+        elif st == "coverage_stage":
+            node(f"company:{p['ticker']}", "company", p["ticker"], p["ticker"], stage=p["to"], stage_note=p["note"])
+        elif st == "risk":
+            rid = f"risk:{p['risk_id']}"
+            node(rid, "risk", p["ticker"], p["risk"], **{k: p.get(k) for k in ("likelihood", "impact", "kill_criterion",
+                                                                                "status", "nature")},
+                 by=e["actor"]["name"], ts=e["ts"], seq=e["seq"])
+            edges.append((rid, "RISK_OF", f"company:{p['ticker']}", {}))
+            edges += [(rid, "CITES", f"claim:{c}", {}) for c in p.get("cites") or []]
+        elif st == "catalyst":
+            kid = f"catalyst:{p['catalyst_id']}"
+            node(kid, "catalyst", p["ticker"], p["event"], date=p["date"], date_confidence=p["date_confidence"],
+                 type=p["type"], status=p["status"], seq=e["seq"])
+            edges.append((kid, "ABOUT", f"company:{p['ticker']}", {}))
         elif st == "published":
             n = nodes.get(f"proposal:{p.get('proposal_id')}")
             if n and "published" not in n["props"]:
                 n["props"]["published"] = {k: v for k, v in p.items() if k != "proposal_id"}
+
+    # Coverage: each run's drivers, with the XBRL facts they come from and the claims that back or contradict them.
+    for cid, steps in coverage_steps.items():
+        company = nodes[cid]["company"]
+        drv = steps.get("drivers", {}).get("output", {})
+        for name, d in (drv.get("drivers") or {}).items():
+            did = f"driver:{cid[9:]}.{name}"
+            ch = (drv.get("chosen") or {}).get(name)
+            node(did, "driver", company, f"{company} {name} = {d['value']}", driver=name, field=d["field"],
+                 value=d["value"], formula=d["formula"], flags=d["flags"], config_value=d["config_value"],
+                 config_comment_value=d["config_comment_value"], chosen=ch, years=[y["period"] for y in d["years"]],
+                 alternatives=[{k: a.get(k) for k in ("method", "value", "formula")} for a in d["alternatives"]],
+                 run=cid[9:], as_of=nodes[cid]["props"]["as_of"])
+            edges.append((cid, "HAS_DRIVER", did, {}))
+            edges.append((did, "SETS", f"assumption:{company}.{d['field']}", {}))
+            node(f"assumption:{company}.{d['field']}", "assumption", company, f"{company} {d['field']}", field=d["field"])
+            for y in d["years"]:
+                for i in y["inputs"]:
+                    fid = f"xfact:{i['fact_id']}"
+                    node(fid, "xfact", company, f"{i['concept']} to {i['end']} = {i['value']}", concept=i["concept"],
+                         value=i["value"], period=f"to {i['end']}", accn=i["accn"], form=i["form"], filed=i["filed"],
+                         url=i["url"], restated=i["restated"])
+                    edges.append((did, "DERIVED_FROM", fid, {"period": y["period"]}))
+            edges += [(did, "SUPPORTED_BY", f"claim:{c['claim_id']}", {}) for c in d.get("corroborating_claims", [])]
+            edges += [(did, "CONTRADICTED_BY", f"claim:{c['claim_id']}", {}) for c in d.get("conflicting_claims", [])]
+        val = steps.get("valuation", {}).get("output", {})
+        if val.get("longgamma"):
+            nodes[cid]["props"].update(longgamma=val["longgamma"], targets=val["targets"], pw_target=val["pw_target"])
 
     # Valuations: from each run's latest step outputs (a step is re-recorded only when it changes).
     for vid, steps in latest_steps.items():
@@ -409,7 +468,44 @@ def why_valuation(g: Graph, run_id: str) -> str:
 
 
 WHY_USAGE = ("Usage: /why <claim_id> · /why <valuation run id> · /why <TICKER> valuations · /why <TICKER> <assumption> (e.g. /why POOL mid_cycle_ebit) · "
-             "/why <TICKER> <metric> <period> (e.g. /why POOL revenue Q2 FY2026) · /why <TICKER> conflicts")
+             "/why <TICKER> <metric> <period> (e.g. /why POOL revenue Q2 FY2026) · /why <TICKER> conflicts · "
+             "/why <TICKER> risks · /why <TICKER> <driver> (e.g. /why POOL dio: the XBRL facts behind it)")
+
+
+def why_driver(g: Graph, company: str, name: str) -> str | None:
+    """The latest coverage run's driver: value, how it was computed, from which facts, and who chose it."""
+    rows = g._nodes(g.db.execute("SELECT id FROM nodes WHERE type = 'driver' AND company = ? AND id LIKE ? ORDER BY id",
+                                 (company, f"%.{name}")))
+    if not rows:
+        return None
+    d = max(rows, key=lambda r: (r["as_of"], r["run"]))
+    ch = d.get("chosen")
+    lines = [f"{company} {name} (coverage {d['run']}, as of {d['as_of']})",
+             f"  XBRL {d['value']}: {d['formula']} over {len(d['years'])} years ({d['years'][0]}–{d['years'][-1]})"
+             if d["years"] else f"  XBRL: not computable ({d['formula']})",
+             f"  config {d['config_value']}" + (f"; its own comment says {d['config_comment_value']}"
+                                                if d.get("config_comment_value") is not None else "")]
+    lines.append(f"  chosen: {ch['value']} from {ch['from']}" + (f" by {ch['by']}: {ch['note']}" if ch.get("by") else "")
+                 if ch else "  not decided yet")
+    lines += [f"  ⚑ {f}" for f in d["flags"]]
+    lines += [f"  alternative {a['method']}: {a['value']} ({a['formula']})" for a in d.get("alternatives", [])]
+    facts = g.out(d["id"], "DERIVED_FROM")
+    if facts:
+        lines.append(f"  from {len(facts)} XBRL facts, e.g.:")
+        lines += [f"    {f['concept']} {f['period']} = {f['value']} · {f['form']} {f['accn']} filed {f['filed']} {f['url']}"
+                  for f in sorted(facts, key=lambda f: (f.get("filed") or "", f["period"]))[-4:]]
+    for edge, what in (("SUPPORTED_BY", "backed by"), ("CONTRADICTED_BY", "contradicted by")):
+        cs = g.out(d["id"], edge)
+        if cs:
+            lines.append(f"  {what} {len(cs)} verified claim(s):")
+            lines += ["    " + _claim_line(g, c).replace("\n", "\n    ") for c in cs[:4]]
+    return "\n".join(lines)
+
+
+def why_risks(g: Graph, company: str) -> str:
+    rs = g._nodes(g.db.execute("SELECT id FROM nodes WHERE type = 'risk' AND company = ? ORDER BY id", (company,)))
+    return "\n".join(f"• {r['label']} [{r['status']}] L{r['likelihood']}×I{r['impact']} · kill: {r['kill_criterion']} "
+                     f"({r['by']} {r['ts'][:10]})" for r in rs) or f"No risks recorded for {company}."
 
 
 def why(g: Graph, arg: str, config_for=None) -> str:
@@ -430,6 +526,13 @@ def why(g: Graph, arg: str, config_for=None) -> str:
         return "\n".join(f"• {x['id'][10:]} {x['status']}" + (
             " · " + ", ".join(f"{k} ${float(y):,.2f}" for k, y in x["value_per_share"].items()) if x.get("value_per_share") else "")
             for x in vals) or f"No valuations of {company}."
+    if parts[1] == "risks":
+        return why_risks(g, company)
+    if len(parts) == 2:
+        drv = why_driver(g, company, parts[1])
+        if drv:
+            cfg = config_for(company) if config_for else None
+            return drv + "\n\n" + why_assumption(g, company, parts[1], (cfg or {}).get(parts[1]))
     if parts[1] == "conflicts":
         pairs = g.conflicts(company)
         return "\n".join(f"⚠ {a['label']}: {a['value']} ({a['published']}) vs {b['value']} ({b['published']}) "

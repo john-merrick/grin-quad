@@ -26,6 +26,9 @@ CLAIM = {"metric": "gross_margin", "period": "FY2025", "value": 0.33, "unit": "p
 def fake_desk_call(name, message, schema, model="sonnet", timeout=600, system_prompt=None):
     if name == "desk-router":
         return {"agents": ["mid-cycle-analyst", "verifier"], "why": "t"}, {}
+    if name == "orchestrator":
+        return {"reply": "Asking the verifier.", "actions": [],
+                "consults": [{"agent": "verifier", "question": "is the margin in the source?"}]}, {"cost_usd": 0}
     return {"reply": f"{name}: gross margin was thirty-three percent.", "cites": []}, {"cost_usd": 0}
 
 
@@ -115,6 +118,10 @@ def test_read_apis(app):
 def test_approve_flow_records_dashboard_channel(app):
     assert req(app, "/api/approve", {"proposal_id": app["pid"], "note": ""})[0] == 400   # note required
     status, body, _ = req(app, "/api/approve", {"proposal_id": app["pid"], "note": "agree"})
+    assert status == 400 and b"not confirmed in review" in body                          # cites unreviewed
+    assert req(app, "/api/review", {"target_id": app["cid"], "context_id": app["pid"], "decision": "confirmed",
+                                    "note": ""})[0] == 200
+    status, body, _ = req(app, "/api/approve", {"proposal_id": app["pid"], "note": "agree"})
     assert status == 200
     appr = [e for e in app["ledger"].entries() if e["stage"] == "approval"]
     assert len(appr) == 1 and appr[0]["payload"]["channel"] == "dashboard"
@@ -133,7 +140,8 @@ def test_resolve_validates(app):
 
 def test_desk_endpoint(app):
     out = j(req(app, "/api/desk", {"text": "how is ACME gross margin?", "conference": True}))
-    assert [r["agent"] for r in out["replies"]] == ["mid-cycle-analyst", "verifier"]
+    assert [r["agent"] for r in out["replies"]] == ["orchestrator"]
+    assert "verifier reports: verifier: gross margin" in out["replies"][0]["text"]
     msgs = [e for e in app["ledger"].entries() if e["stage"] == "message"]
     assert msgs[0]["payload"]["channel"] == "room" and msgs[0]["actor"]["name"] == "tester"
 
@@ -151,12 +159,12 @@ def test_room_turn_with_voice_and_blob_allowlist(app, monkeypatch):
     monkeypatch.setattr(voice, "tts", lambda text, v="default", fmt="mp3", **k: b"ID3fake-mp3-" + text.encode()[:20])
     out = j(req(app, "/api/room/turn", raw=b"\x1aE\xdf\xa3webm", ctype="audio/webm"))
     assert out["transcript"] == "everyone, how is ACME?"
-    assert len(out["replies"]) == 2 and all(r["audio_url"] for r in out["replies"])
+    assert len(out["replies"]) == 1 and all(r["audio_url"] for r in out["replies"])
     status, body, ctype = req(app, out["replies"][0]["audio_url"])
     assert status == 200 and body.startswith(b"ID3fake") and ctype == "audio/mpeg"
 
     stages = [e["stage"] for e in app["ledger"].entries()]
-    assert stages.count("speech") == 2
+    assert stages.count("speech") == 1
     inbound = next(e for e in app["ledger"].entries() if e["stage"] == "message" and e["actor"]["kind"] == "human")
     assert inbound["payload"]["audio_blob"] and req(app, f"/api/blob/{inbound['payload']['audio_blob']}")[0] == 200
 
@@ -196,3 +204,68 @@ def test_valuation_endpoints_read_without_advancing_and_decide_with_the_token(ap
     d = next(e for e in app["ledger"].entries() if e["stage"] == "valuation_decision")
     assert d["actor"]["name"] == "tester" and d["payload"]["channel"] == "dashboard"
     assert "Analysis only" in j(req(app, f"/api/valuation/{r['run_id']}"))["memo"]
+
+
+def test_review_popup_data_highlights_the_exact_source_span(app):
+    d = j(req(app, f"/api/proposal/{app['pid']}"))
+    (c,) = d["cites"]
+    assert c["claim_id"] == app["cid"] and not d["all_confirmed"] and d["review_state"] == {app["cid"]: None}
+    ex = c["excerpt"]
+    assert ex["found"] and ex["match"] == "Gross margin was 33.0% of net sales in fiscal 2025"
+    assert SOURCE.decode()[ex["raw_start"]:ex["raw_end"]] == ex["match"] and ex["before"] == ""
+    assert c["source"]["edgar_url"] is None                     # only sec.gov URIs become links
+    status, body, ctype = req(app, f"/api/source/{c['source']['blob']}?start=0&end=12")
+    assert status == 200 and body == b"Gross margin" and ctype.startswith("text/plain")
+
+
+def test_source_route_serves_only_recorded_sources(app):
+    blob = app["ledger"].put_blob(b"private audio or anything else")
+    assert req(app, f"/api/source/{blob}")[0] == 404
+    assert req(app, "/api/claim/c_000000000000")[0] == 404 and req(app, "/api/proposal/p_0000000000")[0] == 404
+
+
+def test_disputing_a_cite_can_reject_the_claim_and_feedback_is_recorded(app):
+    assert req(app, "/api/review", {"target_id": app["cid"], "context_id": app["pid"], "decision": "disputed",
+                                    "note": ""})[0] == 400                                   # a dispute needs a note
+    assert req(app, "/api/review", {"target_id": app["cid"], "context_id": app["pid"], "decision": "disputed",
+                                    "note": "that is FY2024, not FY2025", "reject_claim": True})[0] == 200
+    assert app["ledger"].verified_claims("ACME") == []                                       # out of the evidence
+    assert req(app, "/api/review", {"target_id": app["cid"], "context_id": app["pid"], "decision": "confirmed",
+                                    "note": ""})[0] == 400                                   # first review is final
+    assert req(app, "/api/feedback", {"target_kind": "proposal", "target_id": app["pid"], "kind": "perspective",
+                                      "text": "pricing power is overstated", "company": "ACME"})[0] == 200
+    assert j(req(app, f"/api/proposal/{app['pid']}"))["feedback"][0]["text"] == "pricing power is overstated"
+    assert req(app, "/api/review", {"target_id": app["cid"], "context_id": app["pid"], "decision": "confirmed"},
+               token=False)[0] == 403
+
+
+def test_ops_view_reports_traced_agent_calls(app, monkeypatch, tmp_path):
+    from grinos import trace
+    monkeypatch.setenv("GRINOS_HOME", str(tmp_path))
+    with trace.span("verifier", kind="generation", model="sonnet", prompt_version="v1") as g:
+        g.end(cost_usd=0.01, usage={"input_tokens": 10, "output_tokens": 1})
+    o = j(req(app, "/api/ops"))
+    assert o["last_7_days"][0]["agent"] == "verifier" and o["last_7_days"][0]["calls"] == 1
+    assert o["trace_url"] is None
+
+
+def test_promotions_are_shown_with_their_diff_and_decided_with_a_note(app, monkeypatch, tmp_path):
+    from grinos import improve
+    from grinos.schemas import Actor
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    body = "You verify.\n- Never guess."
+    (agents / "verifier.md").write_text("---\nname: verifier\n---\n\n" + body + "\n")
+    monkeypatch.setattr(improve, "AGENTS_DIR", agents)
+    L = app["ledger"]
+    new = body + "\n- Check signs."
+    L.append("improve:verifier:x", "prompt_selected", Actor(kind="system", name="t", version="1"),
+             {"promotion_id": "pr_1", "agent": "verifier", "parent_version": improve.prompt_version(body),
+              "cand_version": improve.prompt_version(new), "prompt_blob": L.put_blob(new.encode()), "rationale": "signs",
+              "baseline": {"per_case": {"s": 0.0}}, "candidate": {"per_case": {"s": 1.0}},
+              "failing_cases_before": 1, "failing_cases_after": 0})
+    (v,) = j(req(app, "/api/promotions"))
+    assert "+- Check signs." in v["diff"] and v["cases"] == [{"id": "s", "before": 0.0, "after": 1.0}] and not v["stale"]
+    assert req(app, "/api/promote", {"promotion_id": "pr_1", "decision": "approve", "note": ""})[0] == 400
+    assert req(app, "/api/promote", {"promotion_id": "pr_1", "decision": "approve", "note": "yes"})[0] == 200
+    assert "- Check signs." in (agents / "verifier.md").read_text() and j(req(app, "/api/promotions")) == []

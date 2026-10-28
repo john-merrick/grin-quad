@@ -4,3 +4,4 @@ __pycache__/
 var/
 var.*/
 .env
+services/langfuse/.env

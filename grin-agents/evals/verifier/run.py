@@ -16,13 +16,13 @@ import json
 import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
-
+sys.path.insert(0, str(HERE.parent))
 from cases import AS_OF, CASES, SOURCES  # noqa: E402
+from common import results_dir  # noqa: E402
 
 from grinos.schemas import Claim, Source, sha256  # noqa: E402
 from grinos.verify import verify_claim  # noqa: E402
@@ -46,7 +46,9 @@ def grade(case: dict, result: dict) -> dict:
             "reason_ok": case["reason"] in codes if case["kind"] == "judgment" else None,
             "ok": (v == "verified") if case["kind"] == "valid" else (v != "verified"),
             "false_accept": case["kind"] != "valid" and v == "verified",
-            "by_rules": result["agent"] is None and v == "rejected"}
+            "by_rules": result["agent"] is None and v == "rejected",
+            "case_pass": ((v == "verified") if case["kind"] == "valid" else (v != "verified"))
+            and (case["kind"] != "judgment" or case["reason"] in codes)}
 
 
 def summarise(rows: list[dict]) -> dict:
@@ -76,8 +78,7 @@ def main() -> int:
     args = ap.parse_args()
 
     model = args.model if args.system == "agent" else "none"
-    out_dir = HERE / "results" / f"{datetime.now():%Y%m%d-%H%M%S}_{args.system}_{model}"
-    out_dir.mkdir(parents=True)
+    out_dir = results_dir(HERE, args.system, model)
     jobs = [(c, r) for r in range(args.repeats) for c in CASES if args.only in c["id"]]
 
     def one(job):

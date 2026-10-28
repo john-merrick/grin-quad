@@ -52,6 +52,31 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--chip); }
 #toast { position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 520px; margin: auto; background: var(--text);
          color: var(--bg); padding: 10px 14px; border-radius: 10px; display: none; z-index: 5; }
 .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+dialog#review { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(980px, 96vw);
+                max-height: 92vh; background: var(--bg); color: var(--text); }
+dialog#review::backdrop { background: rgba(0, 0, 0, .45); }
+.dlg-head { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line);
+            background: var(--panel); position: sticky; top: 0; z-index: 1; }
+.dlg-head h2 { margin: 0; font-size: 16px; flex: 1; }
+.dlg-body { padding: 14px 16px; overflow-y: auto; max-height: calc(92vh - 56px); }
+.excerpt { white-space: pre-wrap; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 320px; overflow-y: auto; }
+.excerpt mark { background: #ffe066; color: #1d1d1b; padding: 1px 0; border-radius: 2px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--chip); }
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); } .chip.warn { color: var(--warn); }
+.cite { border-left: 3px solid var(--line); }
+.cite.confirmed { border-left-color: var(--ok); } .cite.disputed { border-left-color: var(--bad); }
+textarea { min-height: 60px; resize: vertical; }
+select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+a.link { color: var(--accent); text-decoration: none; } a.link:hover { text-decoration: underline; }
+.pipeline { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 10px; }
+.pipeline .chip { cursor: pointer; } .pipeline .chip.on { background: var(--accent); color: #fff; }
+.steps { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.step { font-size: 12px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); }
+.step.done { color: var(--ok); border-color: var(--ok); } .step.blocked { color: var(--warn); border-color: var(--warn); font-weight: 600; }
+.step.invalid { color: var(--bad); border-color: var(--bad); } .step.todo { color: var(--muted); }
+.flag { color: var(--warn); font-size: 13px; }
+select.small, input.small { width: auto; }
 </style>
 </head>
 <body>
@@ -62,6 +87,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--chip); }
 </header>
 <nav id="tabs"></nav>
 <main id="panel"></main>
+<dialog id="review"></dialog>
 <div id="toast"></div>
 <script>
 const TOKEN = document.querySelector('meta[name="grin-token"]').content;
@@ -118,9 +144,117 @@ async function act(path, body, done) {
   catch (e) { toast('Refused: ' + e.message); }
 }
 
-function askNote(label) {
-  const n = prompt(label + ' — note (required, recorded in the ledger):');
-  return n && n.trim() ? n.trim() : null;
+// --- review pop-up: every cited claim, highlighted in its source, confirmed before approval ---------
+
+const dlg = document.getElementById('review');
+
+function modal(title, ...body) {
+  dlg.replaceChildren(el('div', {class: 'dlg-head'}, el('h2', {}, title),
+    el('button', {class: 'act', onclick: () => dlg.close()}, 'Close')), el('div', {class: 'dlg-body'}, ...body));
+  if (!dlg.open) dlg.showModal();
+}
+
+function excerptView(text, start, end) {
+  // Three text nodes and a <mark>: the source is untrusted, so it is never parsed as HTML.
+  const mark = el('mark', {}, text.slice(start, end));
+  const box = el('div', {class: 'excerpt'}, text.slice(0, start), mark, text.slice(end));
+  requestAnimationFrame(() => { box.scrollTop = Math.max(0, mark.offsetTop - box.offsetTop - box.clientHeight / 3); });
+  return box;
+}
+
+function claimCard(c, ctx, reload) {
+  const k = c.claim, ex = c.excerpt, rv = c.review;
+  const verdictCls = c.verdict === 'verified' ? 'ok' : c.verdict === 'rejected' ? 'bad' : 'warn';
+  const box = el('div', {});
+  const draw = (text, s, e) => box.replaceChildren(excerptView(text, s, e));
+  if (ex.found) draw(ex.before + ex.match + ex.after, ex.before.length, ex.before.length + ex.match.length);
+  else box.replaceChildren(el('div', {class: 'chip bad'}, 'Quote not found in the stored source'), el('div', {class: 'excerpt'}, ex.after));
+  const nav = el('div', {class: 'row muted'});
+  if (ex.found) {
+    nav.append(`match ${ex.match_index + 1} of ${ex.n_matches} · chars ${ex.raw_start}–${ex.raw_end} of ${ex.total_len}`);
+    if (ex.n_matches > 1) nav.append(el('button', {class: 'act', onclick: async () => {
+      const d = await api(`/api/claim/${c.claim_id}?context=${encodeURIComponent(ctx || '')}&match=${(ex.match_index + 1) % ex.n_matches}`);
+      const e2 = d.excerpt; c.excerpt = e2; draw(e2.before + e2.match + e2.after, e2.before.length, e2.before.length + e2.match.length);
+    }}, 'Next match'));
+    nav.append(el('button', {class: 'act', onclick: async () => {
+      const from = Math.max(0, c.excerpt.raw_start - 4000), to = c.excerpt.raw_end + 4000;
+      const r = await fetch(`/api/source/${c.source.blob}?start=${from}&end=${to}`);
+      if (!r.ok) return toast('Source unavailable');
+      draw(await r.text(), c.excerpt.raw_start - from, c.excerpt.raw_end - from);
+    }}, 'More context'));
+  }
+  const src = c.source;
+  const links = el('div', {class: 'row muted'}, `${src.kind || 'source'} · published ${src.published_at || '?'} · blob ${src.blob.slice(0, 12)}`,
+    src.edgar_url ? el('a', {class: 'link', href: src.edgar_url, target: '_blank', rel: 'noopener noreferrer'}, 'Open filing on EDGAR ↗') : (src.uri || ''),
+    src.fragment_url ? el('a', {class: 'link', href: src.fragment_url, target: '_blank', rel: 'noopener noreferrer'}, 'Jump to the text ↗') : null);
+  const failed = c.rule_checks.filter(x => !x.ok);
+  const card = el('div', {class: 'card cite ' + (rv ? rv.decision : '')},
+    el('div', {class: 'row'}, el('span', {class: 'chip ' + verdictCls}, c.verdict || 'no verdict'),
+      el('strong', {}, k.statement)),
+    el('div', {class: 'muted mono'}, `${c.claim_id} · ${k.metric} · ${k.period} · value ${k.value ?? '—'} ${k.unit || ''}`
+      + (k.adjusted ? ' · non-GAAP' : '') + (k.segment ? ` · segment ${k.segment}` : '')),
+    links, box, nav,
+    failed.length ? el('div', {class: 'muted'}, 'Rule warnings: ' + failed.map(x => `${x.id} (${x.severity})`).join(', ')) : null,
+    c.decision && c.decision.nature ? el('div', {class: 'muted'}, `Decision model: ${c.decision.action} · ${c.decision.nature} · ${c.decision.materiality}`) : null);
+  if (!ctx) return card;
+  if (rv) {
+    card.append(el('div', {class: 'row'}, el('span', {class: 'chip ' + (rv.decision === 'confirmed' ? 'ok' : 'bad')},
+      `${rv.decision} by ${rv.by}`), rv.note ? el('span', {}, rv.note) : null));
+  } else {
+    const note = el('input', {type: 'text', placeholder: 'note (required to dispute)'});
+    const rej = el('input', {type: 'checkbox', id: 'rej-' + c.claim_id});
+    const send = decision => () => act('/api/review', {target_kind: 'claim', target_id: c.claim_id, context_id: ctx,
+      decision, note: note.value, reject_claim: decision === 'disputed' && rej.checked}, reload);
+    card.append(note, el('div', {class: 'row'},
+      el('button', {class: 'act primary', onclick: send('confirmed')}, 'Confirm: the highlight supports the claim'),
+      el('button', {class: 'act danger', onclick: send('disputed')}, 'Dispute'),
+      rej, el('label', {for: 'rej-' + c.claim_id, class: 'muted'}, 'and reject this claim as evidence')));
+  }
+  return card;
+}
+
+function feedbackBox(targetKind, targetId, company, existing, reload) {
+  const kind = el('select', {}, ...['perspective', 'correction', 'dispute', 'praise'].map(k => el('option', {value: k}, k)));
+  const text = el('textarea', {placeholder: 'Your perspective: what you think, what the evidence misses, what would change your mind'});
+  return el('div', {class: 'card'}, el('h3', {}, 'Your perspective and feedback'),
+    el('div', {class: 'muted'}, 'Recorded in the ledger. Perspectives go to the analyst as context (never as evidence) and can become eval cases.'),
+    ...existing.map(f => el('div', {class: 'msg'}, el('div', {class: 'who'}, `${f.kind} · ${f.by} · ${f.ts}`), el('div', {}, f.text))),
+    text, el('div', {class: 'row'}, kind, el('button', {class: 'act primary', onclick: () =>
+      act('/api/feedback', {target_kind: targetKind, target_id: targetId, kind: kind.value, text: text.value, company}, reload)}, 'Add')));
+}
+
+async function openReview(pid) {
+  const d = await api('/api/proposal/' + pid);
+  const reload = () => openReview(pid);
+  const done = d.approval;
+  const note = el('textarea', {placeholder: 'Decision note (required): why you approve or reject'});
+  const nConfirmed = Object.values(d.review_state).filter(v => v === 'confirmed').length;
+  const canApprove = !done && d.check_ok && d.all_confirmed;
+  const approve = el('button', {class: 'act primary', onclick: () => act('/api/approve', {proposal_id: pid, note: note.value}, () => { reload(); show(current); })}, 'Approve');
+  if (!canApprove) approve.setAttribute('disabled', '');
+  modal(`${d.company} · ${d.field}: ${fmt(d.old_value)} → ${fmt(d.new_value)}`,
+    el('div', {class: 'card'},
+      el('div', {class: 'row'}, el('span', {class: 'chip'}, d.nature), el('span', {class: 'chip'}, 'EV ' + pct(d.impact.ev_change_pct)),
+        el('span', {class: 'chip ' + (d.check_ok ? 'ok' : 'bad')}, d.check_ok ? 'checks pass' : 'checks failed'),
+        el('span', {class: 'mono muted'}, `${pid} · ${d.run_id}`)),
+      el('p', {}, d.rationale),
+      d.problems.length ? el('div', {class: 'muted'}, 'Problems: ' + d.problems.join('; ')) : null),
+    el('h3', {}, `Evidence (${nConfirmed} of ${d.cites.length} confirmed)`),
+    ...d.cites.map(c => claimCard(c, pid, reload)),
+    feedbackBox('proposal', pid, d.company, d.feedback, reload),
+    el('div', {class: 'card'}, el('h3', {}, 'Decision'),
+      done ? el('div', {}, `${done.decision}d via ${done.channel}: ${done.note}`,
+        done.decision === 'approve' && !done.cites_reviewed ? el('div', {class: 'muted'},
+          'Approved without cite review (before the review gate, or rejected-only). Reviewing the evidence now still records your view.') : null) : el('div', {},
+        canApprove ? null : el('div', {class: 'muted'}, d.check_ok ? 'Approve unlocks when every cited claim is confirmed.' : 'Failed its checks: reject only.'),
+        note, el('div', {class: 'row'}, approve,
+          el('button', {class: 'act danger', onclick: () => act('/api/reject', {proposal_id: pid, note: note.value}, () => { reload(); show(current); })}, 'Reject')))));
+}
+
+async function openClaim(cid) {
+  const c = await api('/api/claim/' + cid);
+  modal(c.claim.statement, claimCard(c, null, null),
+        feedbackBox('claim', cid, c.claim.company, c.feedback, () => openClaim(cid)));
 }
 
 const TABS = {
@@ -131,13 +265,10 @@ const TABS = {
     for (const x of d.proposals) {
       p.append(el('div', {class: 'card'},
         el('h3', {}, `${x.company} · ${x.field}: ${fmt(x.old_value)} → ${fmt(x.new_value)}`),
-        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.nature} · EV ${pct(x.ev_change_pct)} · cites ${x.cites.join(', ')}`),
+        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.nature} · EV ${pct(x.ev_change_pct)} · ${x.cites.length} cited claim(s)`),
         el('p', {}, x.rationale),
         el('div', {class: 'row'},
-          el('button', {class: 'act primary', onclick: () => { const n = askNote('Approve ' + x.proposal_id);
-            if (n) act('/api/approve', {proposal_id: x.proposal_id, note: n}, () => show('Pending')); }}, 'Approve'),
-          el('button', {class: 'act danger', onclick: () => { const n = askNote('Reject ' + x.proposal_id);
-            if (n) act('/api/reject', {proposal_id: x.proposal_id, note: n}, () => show('Pending')); }}, 'Reject'))));
+          el('button', {class: 'act primary', onclick: () => openReview(x.proposal_id)}, 'Review evidence and decide'))));
     }
     p.append(el('h2', {}, 'Claims needing review'));
     if (!d.claims.length) p.append(el('div', {class: 'empty'}, 'No claims need review.'));
@@ -145,11 +276,11 @@ const TABS = {
       p.append(el('div', {class: 'card'},
         el('h3', {}, c.statement), el('div', {class: 'muted mono'}, c.claim_id + ' · ' + c.company),
         el('p', {}, '“' + c.quote + '”'), el('div', {class: 'muted'}, c.reasons.join(' · ')),
-        el('div', {class: 'row'},
-          el('button', {class: 'act primary', onclick: () => { const n = askNote('Mark verified');
-            if (n) act('/api/resolve', {claim_id: c.claim_id, verdict: 'verified', note: n}, () => show('Pending')); }}, 'Verified'),
-          el('button', {class: 'act danger', onclick: () => { const n = askNote('Mark rejected');
-            if (n) act('/api/resolve', {claim_id: c.claim_id, verdict: 'rejected', note: n}, () => show('Pending')); }}, 'Rejected'))));
+        (() => { const note = el('input', {type: 'text', placeholder: 'note (required)'});
+          return el('div', {}, note, el('div', {class: 'row'},
+            el('button', {class: 'act', onclick: () => openClaim(c.claim_id)}, 'See it in the source'),
+            el('button', {class: 'act primary', onclick: () => act('/api/resolve', {claim_id: c.claim_id, verdict: 'verified', note: note.value}, () => show('Pending'))}, 'Verified'),
+            el('button', {class: 'act danger', onclick: () => act('/api/resolve', {claim_id: c.claim_id, verdict: 'rejected', note: note.value}, () => show('Pending'))}, 'Rejected'))); })()));
     }
   },
   async Runs(p) {
@@ -179,8 +310,9 @@ const TABS = {
       p.append(el('div', {class: 'card'},
         el('div', {class: 'row'}, el('span', {class: 'status ' + cls}, x.status),
            el('strong', {}, `${x.company} · ${x.field}: ${fmt(x.old_value)} → ${fmt(x.new_value)}`)),
-        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.ts} · EV ${pct(x.ev_change_pct)} · cites ${x.cites.join(', ')}`),
+        el('div', {class: 'muted'}, `${x.proposal_id} · ${x.ts} · EV ${pct(x.ev_change_pct)} · ${x.cites.length} cited claim(s)`),
         el('p', {}, x.rationale),
+        el('div', {class: 'row'}, el('button', {class: 'act', onclick: () => openReview(x.proposal_id)}, 'Review evidence')),
         x.problems.length ? el('div', {class: 'muted'}, 'Problems: ' + x.problems.join('; ')) : null,
         x.status === 'approved' ? el('div', {class: 'row'}, el('button', {class: 'act primary', onclick: async () => {
           try { const r = await api('/api/publish', {proposal_id: x.proposal_id});
@@ -202,7 +334,70 @@ const TABS = {
         async i => { detail.replaceChildren(await valuationDetail(runs[i].run_id)); detail.scrollIntoView(); })));
     p.append(detail);
   },
+  async Ops(p) {
+    const o = await api('/api/ops');
+    const link = id => o.trace_url ? el('a', {class: 'link', href: o.trace_url + id, target: '_blank', rel: 'noopener noreferrer'}, id.slice(0, 12))
+                                   : el('span', {class: 'mono'}, id.slice(0, 12));
+    const rows = rs => table(['agent', 'prompt', 'model', 'calls', 'errors', 'p50', 'p95', 'tokens in/out', 'cost', 'last'],
+      rs.map(r => [r.agent, el('span', {class: 'mono'}, r.prompt_version || '—'), r.model || '—', r.calls,
+                   el('span', {class: r.errors ? 'chip bad' : 'muted'}, r.errors), (r.p50_ms / 1000).toFixed(1) + 's',
+                   (r.p95_ms / 1000).toFixed(1) + 's', `${r.input_tokens.toLocaleString()} / ${r.output_tokens.toLocaleString()}`,
+                   '$' + r.cost_usd.toFixed(3), r.last.slice(0, 16)]));
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'Agents, last 7 days (from local traces)'),
+      o.last_7_days.length ? rows(o.last_7_days) : el('div', {class: 'empty'}, 'No traced agent calls yet.')),
+      el('div', {class: 'card'}, el('h3', {}, 'Last 30 days, by prompt version'),
+      o.last_30_days.length ? rows(o.last_30_days) : el('div', {class: 'empty'}, 'Nothing yet.')),
+      el('div', {class: 'card'}, el('h3', {}, 'Recent errors'),
+      o.errors.length ? table(['when', 'span', 'status', 'trace'], o.errors.reverse().map(e => [e.start.slice(0, 19), e.name, e.status || '', link(e.trace_id)]))
+                      : el('div', {class: 'empty'}, 'No errors.')),
+      el('div', {class: 'muted'}, o.trace_url ? 'Trace ids link to Langfuse.' : 'Set LANGFUSE_HOST and LANGFUSE_PROJECT_ID to link traces to Langfuse.'));
+  },
+  async Coverage(p) {
+    const runs = (await api('/api/coverage')).reverse();
+    const t = el('input', {type: 'text', class: 'small', placeholder: 'ticker, e.g. POOL'});
+    const d = el('input', {type: 'date', class: 'small'});
+    p.append(el('div', {class: 'card'}, el('h3', {}, 'Coverage: the LongGamma process, step by step to a verified valuation'),
+      el('div', {class: 'muted'}, 'Every number comes from XBRL facts, verified claims or your decision. Analysis only: no buy/sell calls.'),
+      el('div', {class: 'row'}, t, d, el('button', {class: 'act primary', onclick: async () => {
+        try { const r = await api('/api/coverage/start', {ticker: t.value, as_of: d.value});
+              toast(`${r.run_id}: ${r.status} at ${r.step}`); show('Coverage'); } catch (e) { toast(e.message); } }}, 'Start or resume'))));
+    const detail = el('div', {});
+    if (runs.length) p.append(table(['run', 'ticker', 'as of', 'stage', 'status', 'PW target'],
+      runs.map(r => [el('span', {class: 'mono'}, r.run_id), r.ticker, r.as_of, r.stage || '—',
+        el('span', {class: 'status s-' + (r.status === 'complete' ? 'approved' : r.status === 'blocked' ? 'pending' : 'failed')}, `${r.status} · ${r.step || ''}`),
+        r.pw_target != null ? Number(r.pw_target).toFixed(2) : '—']),
+      async i => { detail.replaceChildren(await coverageDetail(runs[i].run_id)); detail.scrollIntoView(); }));
+    p.append(detail);
+  },
   async Evals(p) {
+    const promos = await api('/api/promotions');
+    p.append(el('h2', {}, 'Prompt improvements waiting for you'));
+    if (!promos.length) p.append(el('div', {class: 'empty'}, 'None. The improvement loop runs weekly, or ask the orchestrator to improve an agent.'));
+    for (const x of promos) {
+      const note = el('input', {type: 'text', placeholder: 'note (required): why you approve or reject'});
+      p.append(el('div', {class: 'card'},
+        el('div', {class: 'row'}, el('span', {class: 'status s-pending'}, x.agent), el('strong', {}, x.promotion_id),
+          el('span', {class: 'muted'}, `failing cases ${x.failing_cases_before} → ${x.failing_cases_after} · no case worse`),
+          x.stale ? el('span', {class: 'chip bad'}, 'stale: the prompt changed since') : null),
+        el('p', {}, x.rationale),
+        el('pre', {class: 'excerpt'}, x.diff),
+        table(['case', 'current prompt', 'candidate'], x.cases.map(c => [c.id, c.before, el('span', {class: c.after > c.before ? 'chip ok' : ''}, c.after)])),
+        note, el('div', {class: 'row'},
+          el('button', {class: 'act primary', onclick: () => act('/api/promote', {promotion_id: x.promotion_id, decision: 'approve', note: note.value}, () => show('Evals'))}, 'Approve: make it live'),
+          el('button', {class: 'act danger', onclick: () => act('/api/promote', {promotion_id: x.promotion_id, decision: 'reject', note: note.value}, () => show('Evals'))}, 'Reject'))));
+    }
+    const hist = await api('/api/eval_history');
+    if (hist.length) {
+      const by = {};
+      for (const h of hist) (by[h.agent] = by[h.agent] || []).push(h);
+      p.append(el('h2', {}, 'Eval runs by prompt version'));
+      for (const [agent, rows] of Object.entries(by)) p.append(el('div', {class: 'card'}, el('h3', {}, agent),
+        table(['date', 'prompt', 'gate', 'cost', 'metrics'], rows.slice(-8).reverse().map(h => [String(h.date).slice(0, 16),
+          el('span', {class: 'mono'}, h.prompt_version), el('span', {class: 'chip ' + (h.passed ? 'ok' : 'bad')}, h.passed ? 'PASS' : 'FAIL'),
+          h.cost_usd == null ? '—' : '$' + Number(h.cost_usd).toFixed(2),
+          Object.entries(h.metrics || {}).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(' · ')]))));
+    }
+    p.append(el('h2', {}, 'Eval history notes'));
     for (const e of await api('/api/evals')) {
       p.append(el('div', {class: 'card'}, el('h3', {}, e.agent),
         e.header.length ? table(e.header, e.rows) : el('pre', {}, e.markdown)));
@@ -230,6 +425,142 @@ const TABS = {
     inp.focus();
   },
 };
+
+const STAGES = ['Idea', 'Deep Dive', 'Watchlist', 'Owned', 'Rejected', 'Archived'];
+
+async function coverageDetail(runId) {
+  const v = await api('/api/coverage/' + encodeURIComponent(runId));
+  const reload = async () => box.replaceWith(await coverageDetail(runId));
+  const T = v.request.ticker, st = v.status || {};
+  const decide = async (body) => {
+    try { const r = await api('/api/coverage/decide', {run_id: runId, ...body}); toast(`${body.target}: run is ${r.status} at ${r.step}`); reload(); }
+    catch (e) { toast('Refused: ' + e.message); } };
+  const box = el('div', {class: 'card'}, el('h3', {}, `${T} · coverage as of ${v.request.as_of}`),
+    el('div', {class: 'muted mono'}, runId + (v.request.supersedes ? ` · supersedes ${v.request.supersedes}` : '')));
+  // stage pipeline (your call; recorded with a note)
+  box.append(el('div', {class: 'pipeline'}, ...STAGES.map(sname => el('span', {class: 'chip' + (v.stage === sname ? ' on' : ''),
+    onclick: () => stageForm(sname)}, sname))));
+  const stageNote = el('div', {});
+  const stageForm = sname => stageNote.replaceChildren(el('div', {class: 'row'}, `Move ${T} to ${sname}:`,
+    (() => { const n = el('input', {type: 'text', placeholder: 'why (required)'});
+      return el('span', {class: 'row'}, n, el('button', {class: 'act primary', onclick: () =>
+        act('/api/coverage/stage', {ticker: T, stage: sname, note: n.value}, reload)}, 'Record')); })()));
+  box.append(stageNote);
+  // step checklist
+  const order = v.steps_order, at = order.indexOf(st.step);
+  box.append(el('div', {class: 'steps'}, ...order.map((name, i) => {
+    const cls = st.status === 'complete' || i < at ? 'done' : i === at ? (st.status === 'invalid' ? 'invalid' : 'blocked') : 'todo';
+    return el('span', {class: 'step ' + cls}, `${i + 1}. ${name}`); })));
+  const cur = v.steps[st.step] || {};
+  if (st.status === 'invalid') box.append(el('div', {class: 'card'}, el('h3', {}, 'Invalid: fix with a revision'),
+    ...((cur.output || {}).problems || (cur.output || {}).errors || []).map(x => el('div', {class: 'flag'}, x))));
+  for (const b of cur.blocking || []) box.append(itemCard(b, v, decide, T, reload));
+  // valuation grid once it exists
+  const val = (v.steps.valuation || {}).output;
+  if (val && val.longgamma) {
+    const lg = val.longgamma;
+    box.append(el('div', {class: 'card'}, el('h3', {}, 'Valuation (distval mid-cycle engine → LongGamma drivers)'),
+      table(['scenario', 'EBIT FY2', 'multiple', 'target / share', 'probability'], ['Bear', 'Base', 'Bull'].map(sname =>
+        [sname, Number(lg['EBIT FY2 ' + sname]).toFixed(1), Number(lg['Target Multiple ' + sname]).toFixed(2) + 'x',
+         Number(val.targets[sname]).toFixed(2), (lg['Prob ' + sname] * 100).toFixed(0) + '%'])),
+      el('div', {class: 'muted'}, `PW target ${Number(val.pw_target).toFixed(2)} · EV ${Number(val.engine.enterprise_value).toFixed(1)}M · `
+        + `net debt ${Number(val.net_debt).toFixed(1)}M · shares ${Number(val.shares).toFixed(3)}M (XBRL)`)));
+  }
+  // drivers with their provenance (also after they're decided)
+  const drv = (v.steps.drivers || {}).output;
+  if (drv && drv.drivers) box.append(el('div', {class: 'card'}, el('h3', {}, 'Drivers and their sources'),
+    table(['driver', 'XBRL', 'config', 'chosen', 'flags', ''], Object.values(drv.drivers).map(d => {
+      const ch = (drv.chosen || {})[d.driver];
+      return [d.driver, d.value == null ? '—' : Number(d.value).toPrecision(4), d.config_value == null ? '—' : Number(d.config_value).toPrecision(4),
+              ch ? `${Number(ch.value).toPrecision(4)} (${ch.from})` : 'not decided', el('span', {class: 'flag'}, d.flags.join('; ')),
+              el('button', {class: 'act', onclick: () => openDriver(d, drv.years)}, 'Sources')]; }))));
+  // risks and catalysts
+  box.append(riskCard(T, v.risks, v.catalysts, reload));
+  // decisions, with revision for drivers / scenarios / judgements
+  if (v.decisions.length) box.append(el('div', {class: 'card'}, el('h3', {}, 'Your decisions'),
+    table(['item', 'decision', 'value', 'note', 'by', ''], v.decisions.map(dd => [dd.target, dd.decision + (dd.revises != null ? ' (revision)' : ''),
+      dd.value ?? dd.text ?? '', dd.note, dd.by,
+      /^(d_|s_bear_|s_bull_|s_probs|k_direction|k_nature)/.test(dd.target) ? el('button', {class: 'act', onclick: () => reviseForm(dd, decide)}, 'Revise') : '']))));
+  if (st.status === 'complete') box.append(el('div', {class: 'card'}, el('h3', {}, 'Capture in Notion'),
+    el('div', {class: 'row'}, ...['sync', 'risks'].map(k => el('button', {class: 'act primary', onclick: async () => {
+      try { const r = await api('/api/coverage/capture', {kind: k, run_id: runId}); modal('LongGamma ' + k, el('pre', {style: 'white-space: pre-wrap'}, r.message)); }
+      catch (e) { toast(e.message); } }}, k === 'sync' ? 'Prepare model sync' : 'Prepare risks + catalysts')))));
+  if (v.memo) box.append(el('pre', {style: 'white-space: pre-wrap; font-size: 12px'}, v.memo));
+  return box;
+}
+
+function itemCard(b, v, decide, T, reload) {
+  const note = el('input', {type: 'text', placeholder: b.kind === 'driver' || b.kind === 'scenario' ? 'note: your reasoning and the source for a value' : 'note'});
+  const card = el('div', {class: 'card'}, el('div', {class: 'row'}, el('span', {class: 'status s-pending'}, b.kind), el('strong', {}, b.id)),
+    el('p', {}, b.detail));
+  const btn = (label, body, primary) => el('button', {class: 'act' + (primary ? ' primary' : ''), onclick: () => decide({target: b.id, note: note.value, ...body})}, label);
+  if (b.kind === 'driver') {
+    const d = (v.steps.drivers.output.drivers || {})[b.driver];
+    const val = el('input', {type: 'text', class: 'small', placeholder: 'your value'});
+    card.append(el('div', {class: 'row'}, el('button', {class: 'act', onclick: () => openDriver(d, v.steps.drivers.output.years)}, 'See the facts and claims')),
+      note, el('div', {class: 'row'}, btn('Accept the XBRL value', {decision: 'accept'}, true), val,
+        el('button', {class: 'act', onclick: () => decide({target: b.id, decision: 'value', value: val.value, note: note.value})}, 'Set value'),
+        btn('Keep the config value', {decision: 'keep'})));
+  } else if (b.kind === 'scenario') {
+    const val = el('input', {type: 'text', class: 'small', placeholder: 'value'});
+    card.append(note, el('div', {class: 'row'}, val, el('button', {class: 'act primary', onclick: () => decide({target: b.id, decision: 'value', value: val.value, note: note.value})}, 'Set'),
+      b.id === 's_probs' ? btn('Accept 25 / 50 / 25', {decision: 'accept'}) : null));
+  } else if (b.kind === 'judgement') {
+    const opts = b.id === 'k_direction' ? ['Long', 'Short'] : ['Structural', 'Cyclical', 'Mixed'];
+    const sel = el('select', {}, ...opts.map(o => el('option', {value: o}, o)));
+    card.append(note, el('div', {class: 'row'}, sel, el('button', {class: 'act primary', onclick: () => decide({target: b.id, decision: 'value', text: sel.value, note: note.value})}, 'Set')));
+  } else if (b.kind === 'claim' || b.kind === 'dispute') {
+    card.append(el('div', {class: 'row'}, el('button', {class: 'act', onclick: () => openClaim(b.claim_id)}, 'See it in the source')),
+      b.kind === 'dispute' ? el('div', {}, note, el('div', {class: 'row'}, btn('Reject the claim', {decision: 'reject'}, true), btn('Keep it (accept)', {decision: 'accept'}))) : el('div', {class: 'muted'}, 'Resolve it in Pending → Claims needing review.'));
+  } else if (b.kind === 'risks') {
+    card.append(el('div', {class: 'muted'}, 'Add them below.'));
+  } else {
+    const val = el('input', {type: 'text', class: 'small', placeholder: 'value ($M)'});
+    card.append(note, el('div', {class: 'row'}, btn('Accept', {decision: 'accept'}, true), val,
+      el('button', {class: 'act', onclick: () => decide({target: b.id, decision: 'value', value: val.value, note: note.value})}, 'Set value')));
+  }
+  return card;
+}
+
+function reviseForm(dd, decide) {
+  const note = el('textarea', {placeholder: 'why you are revising (required)'});
+  const val = el('input', {type: 'text', placeholder: 'new value, or Long/Short, Structural/Cyclical/Mixed'});
+  const kind = el('select', {}, ...['value', 'accept', 'keep'].map(o => el('option', {value: o}, o)));
+  modal('Revise ' + dd.target, el('div', {class: 'card'}, el('div', {class: 'muted'}, `Current: ${dd.decision} ${dd.value ?? dd.text ?? ''} — ${dd.note}. The revision is a new ledger entry; the original stays.`),
+    el('div', {class: 'row'}, kind, val), note, el('div', {class: 'row'}, el('button', {class: 'act primary', onclick: () => {
+      const isText = /^k_/.test(dd.target);
+      decide({target: dd.target, decision: kind.value, value: isText ? null : val.value, text: isText ? val.value : null, note: note.value, revise: true}); dlg.close(); }}, 'Record revision'))));
+}
+
+function openDriver(d, years) {
+  const fact = i => el('div', {class: 'mono'}, `${i.concept} = ${i.value} (to ${i.end}, filed ${i.filed}, ${i.form} ${i.accn}) `,
+    i.url ? el('a', {class: 'link', href: i.url, target: '_blank', rel: 'noopener noreferrer'}, 'filing ↗') : null, i.restated ? ' · restated' : '');
+  modal(`${d.driver}: ${d.value}`,
+    el('div', {class: 'card'}, el('div', {}, d.formula), el('div', {class: 'muted'}, `config ${d.config_value ?? '—'}` + (d.config_comment_value != null ? ` · the config's own comment says ${d.config_comment_value}` : '')),
+      ...d.flags.map(f => el('div', {class: 'flag'}, f)),
+      ...(d.alternatives || []).map(a => el('div', {class: 'muted'}, `alternative (${a.method}): ${a.value} — ${a.formula}`))),
+    el('div', {class: 'card'}, el('h3', {}, 'By fiscal year, with the XBRL facts used'),
+      table(['year', 'value', 'facts'], d.years.map(y => [y.period, Number(y.value).toPrecision(5), el('div', {}, ...y.inputs.map(fact))]))),
+    el('div', {class: 'card'}, el('h3', {}, 'Verified claims'),
+      ...[['corroborate', d.corroborating_claims], ['disagree', d.conflicting_claims]].map(([what, cs]) => el('div', {},
+        el('strong', {}, `${cs.length} ${what}`), ...cs.map(c => el('div', {class: 'row'}, el('a', {class: 'link', href: '#', onclick: e => { e.preventDefault(); openClaim(c.claim_id); }}, c.claim_id),
+          `${c.period}: ${c.value} — ${c.statement}`))))));
+}
+
+function riskCard(T, risks, catalysts, reload) {
+  const r = el('input', {type: 'text', placeholder: 'risk, in your words'}), k = el('input', {type: 'text', placeholder: 'kill criterion: a measurable exit test, e.g. "gross margin below 28% for 4 quarters"'});
+  const num = () => el('select', {class: 'small'}, ...[1, 2, 3, 4, 5].map(n => el('option', {value: n}, n)));
+  const l = num(), i = num(), nat = el('select', {class: 'small'}, ...['', 'Structural', 'Cyclical'].map(o => el('option', {value: o}, o || 'nature…')));
+  const ev = el('input', {type: 'text', class: 'small', placeholder: 'catalyst, e.g. Q3 FY2026'}), cd = el('input', {type: 'date', class: 'small'});
+  return el('div', {class: 'card'}, el('h3', {}, `Risks and kill criteria for ${T} (yours)`),
+    risks.length ? table(['risk', 'L', 'I', 'status', 'kill criterion', 'by'], risks.map(x => [x.risk, x.likelihood, x.impact, x.status, x.kill_criterion, x.by]))
+                 : el('div', {class: 'muted'}, 'No risks yet. At least 3 are needed.'),
+    r, k, el('div', {class: 'row'}, 'likelihood', l, 'impact', i, nat, el('button', {class: 'act primary', onclick: () =>
+      act('/api/coverage/risk', {ticker: T, risk: r.value, kill_criterion: k.value, likelihood: +l.value, impact: +i.value, nature: nat.value || null}, reload)}, 'Add risk')),
+    el('h3', {}, 'Catalysts'),
+    catalysts.length ? table(['event', 'date', 'confidence', 'status'], catalysts.map(x => [x.event, x.date, x.date_confidence, x.status])) : el('div', {class: 'muted'}, 'None.'),
+    el('div', {class: 'row'}, ev, cd, el('button', {class: 'act', onclick: () => act('/api/coverage/catalyst', {ticker: T, event: ev.value, date: cd.value}, reload)}, 'Add catalyst')));
+}
 
 async function valuationDetail(runId) {
   const v = await api('/api/valuation/' + encodeURIComponent(runId));
@@ -260,7 +591,9 @@ function stepsTable(entries) {
     entries.map(e => [e.seq, e.stage, el('span', {class: 'mono'}, e.actor), e.detail]));
 }
 
+let current = 'Pending';
 async function show(name) {
+  current = name;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   const p = document.getElementById('panel');
   p.replaceChildren(el('div', {class: 'empty'}, 'Loading…'));

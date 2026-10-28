@@ -16,14 +16,15 @@ import re
 import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
-
+sys.path.insert(0, str(HERE.parent))
 from cases import EXPECTED, FORBIDDEN, SOURCES  # noqa: E402
+from common import results_dir  # noqa: E402
 
 from grinos.evidence_check import check_claim  # noqa: E402
 from grinos.extract import extract_claims  # noqa: E402
@@ -57,7 +58,8 @@ def grade(src_key: str, text: str, claims: list[dict]) -> dict:
     missed = [e for e in EXPECTED[src_key] if not found(e)]
     forbidden = sum(any(f.lower() in c["quote"].lower() for f in FORBIDDEN.get(src_key, [])) for c in claims)
     return {"n_claims": len(claims), "rule_pass": passed / len(claims) if claims else 0.0,
-            "recall": 1 - len(missed) / len(EXPECTED[src_key]), "forbidden": forbidden,
+            "recall": 1 - len(missed) / len(EXPECTED[src_key]), "forbidden": forbidden, "id": src_key,
+            "case_pass": not missed and not forbidden and (passed / len(claims) if claims else 0.0) >= GATES["rule_pass_rate"][1],
             "missed": [f"{sorted(e['metrics'])[0]} {e['year']} {e['value']}" for e in missed], "bad": bad}
 
 
@@ -68,8 +70,7 @@ def main() -> int:
     ap.add_argument("--repeats", type=int, default=1)
     args = ap.parse_args()
     model = args.model if args.system == "agent" else "none"
-    out_dir = HERE / "results" / f"{datetime.now():%Y%m%d-%H%M%S}_{args.system}_{model}"
-    out_dir.mkdir(parents=True)
+    out_dir = results_dir(HERE, args.system, model)
 
     def one(job):
         key, rep = job

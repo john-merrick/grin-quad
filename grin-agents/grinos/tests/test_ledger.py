@@ -137,3 +137,18 @@ def test_append_if_guard_aborts_without_writing(ledger):
     with pytest.raises(ValueError, match="nope"):
         ledger.append_if("r1", "x", RULE, {"n": 2}, guard=lambda entries: "nope")
     assert sum(1 for _ in ledger.entries()) == 1 and ledger.audit() == []
+
+
+def test_append_once_writes_one_entry_per_key(ledger):
+    e1, created1 = ledger.append_once("r", "claim", RULE, {"x": 1}, idem="r:claim:c_1")
+    e2, created2 = ledger.append_once("r", "claim", RULE, {"x": 2}, idem="r:claim:c_1")
+    assert created1 and not created2 and e2["seq"] == e1["seq"] and e2["payload"]["x"] == 1
+    assert ledger.find_idem("r:claim:c_1")["seq"] == e1["seq"] and ledger.find_idem("nope") is None
+    assert len(list(ledger.entries())) == 1 and ledger.audit() == []
+
+
+def test_append_once_is_atomic_across_threads(ledger):
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda i: ledger.append_once("r", "s", RULE, {"i": i}, idem="same"), range(16)))
+    assert sum(created for _, created in results) == 1 and len(list(ledger.entries())) == 1

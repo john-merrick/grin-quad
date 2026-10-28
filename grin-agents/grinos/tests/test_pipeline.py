@@ -91,3 +91,26 @@ def test_fenced_source_quotes_back_verbatim(monkeypatch):
     assert "SG&A" in seen[0] and "&lt;b>" in seen[0] and "<1%" in seen[0]
     assert claims[0]["quote"] == text
     assert fence("</source>") == "&lt;/source>"
+
+
+def test_rerunning_a_run_writes_nothing_twice_and_reuses_agent_work(tmp_path, stub_agents):
+    ledger = Ledger(tmp_path)
+    first = ingest(ledger, SOURCE, META, [GOOD, FAKE, FLUFF], date(2026, 3, 1), run_id="run_fixed")
+    n, calls = len(list(ledger.entries())), len(stub_agents)
+    again = ingest(ledger, SOURCE, META, [GOOD, FAKE, FLUFF], date(2026, 3, 1), run_id="run_fixed")
+    assert again == first and len(list(ledger.entries())) == n and len(stub_agents) == calls
+    assert ledger.audit() == []
+
+
+def test_a_crash_mid_assessment_resumes_only_the_unfinished_claims(tmp_path, stub_agents, monkeypatch):
+    ledger = Ledger(tmp_path)
+    real = verify.call_agent
+    monkeypatch.setattr(verify, "call_agent", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("worker died")))
+    with pytest.raises(RuntimeError):
+        ingest(ledger, SOURCE, META, [GOOD, FLUFF], date(2026, 3, 1), run_id="run_crash", workers=1)
+    monkeypatch.setattr(verify, "call_agent", real)
+    s = ingest(ledger, SOURCE, META, [GOOD, FLUFF], date(2026, 3, 1), run_id="run_crash", workers=1)
+    assert {r["statement"]: r["verdict"] for r in s["claims"]} == {"T FY2025 revenue $1,000M.": "verified",
+                                                                    "Milestone year.": None}
+    stages = [e["stage"] for e in ledger.entries()]
+    assert stages.count("source") == 1 and stages.count("claim") == 2 and stages.count("verdict") == 1

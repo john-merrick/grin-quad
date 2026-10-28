@@ -1,9 +1,22 @@
 # grin-agents — Grin OS
 
-An operating system for the valuation process: agents you can talk to in Telegram, the
-dashboard, or a multi-agent voice room. **Every piece of evidence is triaged by a decision
-model, then verified, before any analyst agent may use it.** Every step is recorded in a keyed,
-hash-chained ledger on disk. Notion receives only the finished, human-approved output.
+An operating system for the valuation process.
+
+- **One counterpart.** You talk to one agent, the **orchestrator**, in Telegram, the dashboard or the voice
+  room. It assigns the work to the others.
+- **Durable work.** Every agent call and long process runs as a **Temporal** workflow or activity, so the
+  work survives restarts and you can watch it at `127.0.0.1:8233`.
+- **Verified evidence only.** Each piece of evidence is triaged by a decision model, then verified, before
+  any analyst agent may use it.
+- **You review the sources.** You see every cited claim highlighted in its source before you approve
+  anything.
+- **Step-by-step valuation.** The **coverage** workflow takes a company from sources to a distval
+  valuation, with every number traced to an XBRL fact or a verified claim.
+- **Improvement under your control.** Each agent improves against its own eval, and nothing goes live
+  without your approval.
+- **Everything is traced:** local JSONL, plus Langfuse when it's running.
+- **The ledger is the record.** It's keyed, hash-chained and on disk. Notion receives only finished,
+  human-approved output.
 
 Design and phases: [`ARCHITECTURE.md`](ARCHITECTURE.md). Rule: every agent starts with its eval
 ([`skills/eval-first-agent`](skills/eval-first-agent/SKILL.md)).
@@ -11,14 +24,18 @@ Design and phases: [`ARCHITECTURE.md`](ARCHITECTURE.md). Rule: every agent start
 ## The flow
 
 ```
+you ──▶ orchestrator        plans: start work (Temporal workflows), consult specialists, reply in one voice
 filing / transcript / note
-  → claim-extractor        facts as printed, verbatim quotes      (untrusted)
-  → decision-model         lever + structural/cyclical/one-off/noise
-  → rules → verifier       quote in source bytes, value, no lookahead → does the quote support it?
-  → mid-cycle-analyst      proposals citing verified claims only
+  → claim-extractor        facts as printed, verbatim quotes      (untrusted)          agent.claim-extractor
+  → decision-model         lever + structural/cyclical/one-off/noise                    agent.decision-model
+  → rules → verifier       quote in source bytes, value, no lookahead → does the quote support it?   agent.verifier
+  → mid-cycle-analyst      proposals citing verified claims only, your perspectives as context
   → proposal_check         citations, field, schema, config checks, distval engine impact
-  → you approve            Telegram / dashboard / CLI
-  → Notion (LongGamma)     results note / model sync, per the longgamma-* skill contracts
+  → you review             the pop-up: each cited claim highlighted in its source; confirm or dispute
+  → you approve            only once every cite is confirmed (every channel)
+  → coverage               sources → claims → XBRL drivers → scenarios → valuation → risks → memo, each step yours to verify
+  → Notion (LongGamma)     results note / model sync / risks + catalysts, per the longgamma-* skill contracts
+evals → improvement loop   failures + your corrections → candidate prompts → no-regression winner → you approve
 ```
 
 Every completed piece of research is captured in the LongGamma Notion workflow, in its house
@@ -37,7 +54,8 @@ Run all gates on production models: `$V evals/run_all.py`, which writes `evals/S
 | decision-model | sonnet | 0 lost evidence, ≥90% action, ≥80% nature | rules-only: 30% nature |
 | verifier | sonnet | **0 false accepts**, 100% rule rejects, ≥85% valid accepted, ≥90% right reason | rules-only: 54% false accepts |
 | mid-cycle-analyst | sonnet | expected changes found, **no change on cyclical/confirming evidence**, 0 injection, valid citations | naive: fails restraint. Haiku also fails (too conservative) |
-| desk-router | haiku | ≥90% required agents, ≥85% precision | always-analyst: 33% |
+| orchestrator | sonnet | ≥90% requested work started, ≤5% unrequested, **100% of your decisions left to you**, 100% valid actions, ≥85% right consults, 0 invented numbers | always-consult-the-analyst: 0% recall |
+| prompt-optimiser | sonnet | ≥90% edits apply, **100% rules kept, 0 leaks** of eval material, ≤1.5× size, ≥80% restores the missing rule | paste-the-failures: 100% leaks |
 | memo-writer | sonnet | 100% drafts valid within 2 attempts (numbers only from the valuation, sheet citations, disconfirming + reverse DCF cited), 0 recommendation language, 0 injection | naive prompt: recommends in 100%, follows injection 25%. Haiku fails (buy-type language) |
 | config-auditor | sonnet | 100% rule, ≥80% judgment, 0 clean false alarms | tools-only: 0% judgment |
 
@@ -63,6 +81,8 @@ V=../val-machine/.venv/bin/python          # every command below uses $V
 | SEC identity | `EDGAR_IDENTITY="Your Name you@example.com"` in `.env` or your shell (SEC requires a name and email) |
 | Notion (optional) | `NOTION_TOKEN`, with the integration added to Valuation Log, Research Notes, Companies and Agent Registry. Check with `$V -m grinos notion-check` (read-only) |
 | Telegram (optional) | `TELEGRAM_BOT_TOKEN`, then pair from your own terminal: `$V -m grinos telegram-pair` (approve the 1Password prompt, then send the printed code to the bot) |
+| Temporal (recommended) | `$V -m pip install -r requirements.txt` (temporalio), `brew install temporal`, then `services/install.sh --temporal` (local dev server, UI `127.0.0.1:8233`, and `grinos worker`). Without it, work runs inline and the ledger records `execution: inline` |
+| Langfuse (optional) | `services/install.sh --langfuse` (docker compose, UI `127.0.0.1:3000`; the sign-in is in `services/langfuse/.env`). grinos reads the keys from that file. Local traces in `var/traces/` work without it |
 | Voice (optional) | Start [VoiceStudio](https://github.com/debpalash/VoiceStudio) on `127.0.0.1:3900` and create the voices listed under [What needs you](#what-needs-you) |
 
 The ledger key is created on first use at `~/.config/grinos/ledger.key`. Keep it out of synced folders.
@@ -123,6 +143,17 @@ $V -m grinos why POOL revenue Q2 FY2026    # one fact across every filing that s
 
 Read the rejections on any new kind of source. Each surprise becomes an eval case
 ([`skills/eval-first-agent`](skills/eval-first-agent/SKILL.md), step 7).
+
+### 5a. Review a proposal against its sources
+
+In the dashboard, **Pending → Review evidence and decide** opens the review pop-up:
+- **Each cited claim** is shown with the exact text it was extracted from, highlighted in the stored source.
+  "More context" widens the excerpt, and the links open the filing on EDGAR or jump to the quote.
+- **Confirm** each cite, or **Dispute** it with a note. A dispute can also reject the claim, which takes it
+  out of the evidence.
+- **Add your perspective** in the box. It reaches the analyst next time as context, never as evidence.
+- **Approve** unlocks only when every cite is confirmed. That holds on every channel: `/approve` and
+  `grinos approve` refuse unreviewed proposals.
 
 ### 6a. Update the mid-cycle model → Notion
 
@@ -186,21 +217,84 @@ A results note leaves Thesis Impact unset, and never applies its proposed impact
 0.5% are ignored. A company missing from Companies stops the capture: run
 `longgamma-initiate-coverage` first. Meetings and calls go through `longgamma-event-note`.
 
+### 6d. Cover a company step by step (the LongGamma process → distval)
+
+```bash
+$V -m grinos coverage start POOL --as-of 2026-09-21 --config ../val-machine/distval/companies/pool.yaml
+$V -m grinos coverage list
+$V -m grinos coverage decide <run> d_dio accept                       # use the XBRL value
+$V -m grinos coverage decide <run> d_mid_cycle_ebit value --value 650 --note "FY23–25 mean; FY16–19 too small"
+$V -m grinos coverage decide <run> s_bear_ebit value --value 520 --note "…"   # scenarios are yours
+$V -m grinos coverage risk POOL --text "Housing slump" --likelihood 3 --impact 4 --kill "new pool builds < 50k for 2 years"
+$V -m grinos coverage decide <run> k_direction value --text Long --note "…"
+$V -m grinos coverage decide <run> s_bear_multiple value --value 9 --note "typo" --revise   # recorded revision
+$V -m grinos coverage apply <run> --note "adopt the verified drivers"  # writes the YAML, with provenance comments
+$V -m grinos capture sync <run>   ·   $V -m grinos capture risks <run>
+```
+
+Or, in the dashboard's **Coverage** tab, ask the orchestrator to "cover POOL".
+
+**The steps:**
+1. **Sources.** You confirm the source set.
+2. **Claims.** Claims that still need a human, and your open disputes.
+3. **Drivers.** Each one is computed from 10 years of XBRL: gross margin, opex, DIO/DSO/DPO as days of
+   revenue, tax, capex and mid-cycle EBIT.
+   - Each lists the facts behind it with accession numbers and filing links, the claims that back it or
+     contradict it, and flags such as "config says 140 but its own comment says avg 83.9".
+   - You **accept**, **set a value** or **keep** the config value.
+4. **Scenarios.** Bear and bull EBIT and multiples, and the probabilities. These are yours, shown against
+   the base case.
+5. **Valuation.** The distval engine, converted to LongGamma drivers and the PW target.
+6. **Risks.** Three to five, each with a measurable kill criterion, plus Direction and Structural/Cyclical.
+7. **Validate.**
+8. **Memo.**
+
+`/why POOL dio` explains any driver, down to its filings.
+
+### 6e. Improve an agent (eval-driven, your approval)
+
+```bash
+$V -m grinos improve start verifier      # or ask the orchestrator; weekly with: grinos improve schedule
+$V -m grinos improve list                # winners waiting for you
+$V -m grinos improve show <pr_…>         # the diff and per-case before → after
+$V -m grinos improve approve <pr_…> --note "…"   # writes agents/verifier.md; then re-run its eval and commit
+```
+
+**How a round works:**
+1. **Inputs.** The loop reads the agent's failing eval cases and your corrections. Corrections are feedback
+   of kind correction or dispute that names the agent.
+2. **Candidates.** The prompt-optimiser proposes exact edits. Edits that drop a rule, leak eval material or
+   grow the prompt more than 1.5× are refused.
+3. **Scoring.** Each candidate is scored on the agent's eval next to a fresh run of the current prompt.
+4. **Selection.** A candidate is selected only if it passes every gate and **no case does worse**.
+5. **Your decision.** It waits for you. The weekly budget caps eval spend.
+
 ### 7. Work from the interfaces
 
 ```bash
-$V -m grinos serve            # dashboard http://127.0.0.1:8765 (Pending, Runs, Trail, Proposals,
-                              #   Valuations, Evals, Desk); voice room at /room
+$V -m grinos serve            # dashboard http://127.0.0.1:8765 (Pending, Runs, Trail, Proposals, Coverage,
+                              #   Valuations, Ops, Evals, Desk); voice room at /room
 $V -m grinos telegram         # the bot; allowlisted users only (pair first, step 1)
-services/install.sh           # optional: both at login as LaunchAgents (--uninstall to remove)
+$V -m grinos worker           # the Temporal worker (every agent's task queue)
+services/install.sh [--temporal] [--langfuse]   # at login as LaunchAgents (--uninstall to remove)
 ```
 
-In Telegram and the voice room, `/commands` act: `/pending`, `/approve`, `/reject`, `/resolve`,
-`/analyse`, `/value`, `/valuation`, `/vdecide`, `/capture`, `/go`, `/why`, `/audit`. Anything else is a
-question for the desk. `@analyst`, `@verifier`, `@decision`, `@auditor` or `@extractor` pick who
-answers; otherwise the router does. In a group or the voice room, several agents answer in turn.
-To ingest from Telegram, send a text file captioned `/ingest TICKER KIND PUBLISHED [AS_OF]`.
-Agent replies can never trigger an action: only your own `/commands` do.
+**Free text goes to the orchestrator,** in Telegram, the Desk tab and the voice room. It:
+- starts the work on Temporal: analysis, coverage, evals or an improvement round;
+- consults specialists, whose answers come back as "verifier reports: …";
+- tells you when a workflow needs you or finishes.
+
+**It never makes your decisions.** For an approval, a dispute, a coverage decision, a risk, a stage change,
+a Notion go or a promotion, it gives you the exact command to type.
+
+**`/commands` act directly,** with no model involved: `/pending`, `/approve`, `/reject`, `/resolve`,
+`/analyse`, `/cover`, `/coverage`, `/cdecide`, `/risk`, `/stage`, `/value`, `/valuation`, `/vdecide`,
+`/capture`, `/go`, `/promotions`, `/promote`, `/why`, `/audit`.
+
+**To ingest from Telegram,** send a text file captioned `/ingest TICKER KIND PUBLISHED [AS_OF]`.
+
+**Observability:** the Temporal UI (`127.0.0.1:8233`) for workflow state, the **Ops** tab for cost,
+latency, failures and tokens per agent and prompt version, and Langfuse for full traces.
 
 ### 8. The routine
 
@@ -303,6 +397,12 @@ Example output: [`examples/valuation/acme_memo.md`](examples/valuation/acme_memo
 | the research graph can't drift from the ledger | rebuilt from the ledger whenever its head moves; confirms/conflicts only between gate-served claims | `test_graph` |
 | Telegram strangers can't act | allowlist before every branch; refusals rate-limited | `test_telegram` |
 | dashboard can't be driven by other sites | 127.0.0.1 only, Host check, per-process POST token, CSP, no innerHTML | `test_web` |
+| a highlight is the exact quoted text | `evidence_check.locate`: raw offsets from a char-by-char normalisation map; all 2,419 rule-passing claims locate | `test_evidence_check` (property tests) |
+| nothing is approved on unreviewed evidence | `decide_proposal` needs a `confirmed` review of every cite, on every channel | `test_review`, `test_web` |
+| a retried workflow step writes once and pays an agent once | `Ledger.append_once` idempotency keys; stable run and proposal ids | `test_ledger`, `test_pipeline`, `test_temporal` |
+| the orchestrator can't act for you | `check_plan` allowlist; your decisions only as neutralised suggested commands; unsourced numbers removed | `test_orchestrator`, orchestrator eval |
+| every valuation driver has a source | `drivers.extract`: XBRL facts with accession and URL per year, or your value with a note; `validate` refuses gaps | `test_coverage` |
+| an improved prompt goes live only with your approval, and only if no case got worse | `improve.select` per-case no-regression; `decide_promotion` refuses stale parents | `test_improve`, `test_temporal` |
 
 Limit: anyone who can read the ledger key can forge entries. Keep `~/.config/grinos/ledger.key`
 out of synced folders.
@@ -314,7 +414,9 @@ out of synced folders.
 | `NOTION_TOKEN` in `.env`, and the integration added to Valuation Log, Research Notes, Companies and Agent Registry | Only you can create a Notion integration. Until then `publish` stops at the outbox |
 | Telegram bot token and your user id in `.env` | from @BotFather and @userinfobot |
 | Install and start [VoiceStudio](https://github.com/debpalash/VoiceStudio), and create designed voices `grin-analyst`, `grin-verifier`, `grin-decision`, `grin-auditor`, `grin-extractor` | about 5 GB of models; AGPL-3.0. Without these voices, every agent uses the default voice |
-| `services/install.sh` | changes your login items |
+| `services/install.sh [--temporal] [--langfuse]` | changes your login items; `--langfuse` runs docker containers |
+| `$V -m pip install -r requirements.txt` | adds temporalio to the val-machine venv |
+| approving prompt promotions, then committing `agents/*.md` | a prompt change is a change to how an agent behaves |
 | `grinos registry --push` | writes Agent Registry rows to Notion |
 
 ## Layout
@@ -322,13 +424,15 @@ out of synced folders.
 ```
 grinos/          the OS: ledger, schemas, rules, pipeline, decide, verify, extract, analyst,
                  proposal_check, proposals, notion, desk, voice, telegram, web/, cli, graph,
-                 sec + xbrl + valuation + valuation_memo + narrative (the FCFF workflow)
+                 sec + xbrl + valuation + valuation_memo + narrative (the FCFF workflow),
+                 review (the evidence pop-up), steps + drivers + coverage (the coverage workflow),
+                 orchestrator, improve (the improvement loop), trace (tracing), runtime + temporal/ (Temporal)
 agents/          agent prompts (Claude Code subagent format; ./install.sh links them into .claude/)
 evals/<agent>/   cases, deterministic grader, gates, runner, BASELINE.md; run_all.py → STATUS.json
 tools/           config_facts.py (config-auditor's rules), edgar.py + html_to_text.py (SEC sources),
                  bulk_ingest.py
 examples/valuation/  acme.yaml (assumptions, documented), sec/ (synthetic SEC responses), acme_memo.md
-services/        LaunchAgent installer
+services/        LaunchAgent installer (--temporal, --langfuse); langfuse/docker-compose.yml
 examples/        sample claims and a synthetic investor-day source
 var/             runtime, gitignored: ledger.jsonl, ledger.head, store/blobs, graph.sqlite, inbox, outbox, logs
 ```

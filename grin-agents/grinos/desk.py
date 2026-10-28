@@ -20,12 +20,12 @@ from pathlib import Path
 
 import yaml
 
-from grinos import notion
+from grinos import notion, trace
 from grinos.graph import Graph, why
 from grinos.ledger import Ledger
 from grinos.llm import agent_actor, agent_prompt, call_agent
 from grinos.pipeline import human_verdict
-from grinos.proposals import PAST, analyse, decide_proposal, pending, proposal_state
+from grinos.proposals import PAST, decide_proposal, pending, proposal_state
 from grinos.schemas import Actor, fence
 
 ROOT = Path(__file__).parents[1]
@@ -40,7 +40,8 @@ PROPOSAL_ID = re.compile(r"\bp_[0-9a-f]{10}\b")
 MAX_CONTEXT = 30_000
 WORD_JOINER = "\u2060"
 # Agent text could echo a command from a poisoned source; break it so it can't be tapped in Telegram.
-ACTION_CMD = re.compile(r"/(approve|reject|publish|resolve|analyse|ingest|value|vdecide|capture|go)\b", re.IGNORECASE)
+ACTION_CMD = re.compile(r"/(approve|reject|publish|resolve|analyse|ingest|value|vdecide|capture|go|cover|cdecide|risk|stage|promote)\b",
+                        re.IGNORECASE)
 
 
 def neutralise(text: str) -> str:
@@ -68,7 +69,12 @@ HELP = """Commands:
 /value <TICKER> [DATE PRICE] — FCFF valuation from var/assumptions/<ticker>.yaml (analysis only)
 /valuation [run_id] — list runs, or one run's status and what it needs from you
 /vdecide <run_id> <item> accept|reject|approve|value [figure] <note>
-/why <claim_id> | <TICKER> <assumption> | <TICKER> <metric> <period> | <TICKER> conflicts
+/cover <TICKER> [AS_OF] — the LongGamma process step by step to a verified valuation (Coverage tab shows the sources)
+/coverage [run_id] — list coverage runs, or one run and what it needs from you
+/cdecide <run_id> <item> accept|keep|value [figure|Long|Short|Structural|Cyclical|Mixed] <note>
+/risk <TICKER> <likelihood 1-5> <impact 1-5> <risk> | <kill criterion>   /stage <TICKER> <stage> <note>
+/why <claim_id> | <TICKER> <assumption or driver> | <TICKER> <metric> <period> | <TICKER> conflicts | <TICKER> risks
+/promotions — prompt changes the improvement loop found, waiting for you · /promote <id> approve|reject <note>
 /runs  /trail <claim_id>  /evidence <TICKER>  /audit
 In Telegram, send a text filing as a document captioned: /ingest TICKER KIND PUBLISHED [AS_OF]
 Anything else is a question for the desk; use @analyst @verifier @decision @auditor @extractor to pick who answers."""
@@ -76,20 +82,37 @@ Anything else is a question for the desk; use @analyst @verifier @decision @audi
 
 class Desk:
     def __init__(self, ledger: Ledger, model: str = "sonnet", router_model: str = "haiku",
-                 call: Callable = call_agent, sec_get: Callable | None = None):
+                 call: Callable = call_agent, sec_get: Callable | None = None, orchestrated: bool = True):
         self.ledger, self.model, self.router_model, self.call = ledger, model, router_model, call
+        if call is call_agent:                       # the real thing: run agent calls on Temporal when it's up
+            from grinos import runtime
+            self.call = lambda *a, **k: runtime.agent_call(ledger, *a, **k)
+        # Free text goes to the orchestrator, the only agent Isaac talks to; `orchestrated=False` keeps the
+        # old router-picks-specialists desk (used by its own eval and tests).
+        self.orchestrated = orchestrated
         self.sec_get = sec_get                      # SEC fetcher for /value; None = the network
 
     # --- entry point ----------------------------------------------------------------
 
     def handle(self, text: str, user: str, channel: str, thread: str = "main",
                audio_blob: str | None = None, conference: bool = False) -> list[dict]:
+        with trace.span("desk turn", session_id=f"{channel}:{thread}", input=text,
+                        metadata={"channel": channel, "user": user, "conference": conference}) as s:
+            replies = self._handle(text, user, channel, thread, audio_blob, conference)
+            s.end(output=[{"agent": r.get("agent"), "text": (r.get("text") or "")[:500]} for r in replies])
+            return replies
+
+    def _handle(self, text: str, user: str, channel: str, thread: str,
+                audio_blob: str | None, conference: bool) -> list[dict]:
         text = text.replace(WORD_JOINER, "").strip()   # a human pasting a suggested command still works
         inbound = self.ledger.append(f"{channel}:{thread}", "message", Actor(kind="human", name=user, version="-"),
                                      {"channel": channel, "thread": thread, "text": text, "audio_blob": audio_blob},
                                      refs=[f"blob:{audio_blob}"] if audio_blob else [])
         if text.startswith("/"):
             return [self._command(text, user, channel, thread, inbound)]
+        if self.orchestrated:
+            from grinos import orchestrator
+            return orchestrator.turn(self, text, user, channel, thread, inbound)
         agents = self.route(text, conference)
         replies: list[dict] = []
         for agent in agents:
@@ -205,6 +228,7 @@ class Desk:
     def _command(self, text: str, user: str, channel: str, thread: str, inbound: dict) -> dict:
         cmd, *rest = text[1:].split(maxsplit=1)
         arg = rest[0] if rest else ""
+        self._thread = thread
         try:
             result = self._run_command(cmd.lower().split("@")[0], arg, user, channel)
         except Exception as exc:  # report, never crash the bot
@@ -267,8 +291,82 @@ class Desk:
         V.decide(L, run_id, target, decision, user, " ".join(rest), value, channel=channel)
         return V.summary(V.resume(L, run_id))
 
+    def _notify(self, channel: str) -> dict:
+        """Where a workflow started from this message reports back (Telegram chat, or the ledger)."""
+        thread = getattr(self, "_thread", "main")
+        return {"channel": channel, "target": thread if channel == "telegram" else None, "thread": f"{channel}:{thread}"}
+
+    def _coverage_command(self, cmd: str, arg: str, user: str, channel: str) -> str:
+        from datetime import date as _date
+
+        from grinos import coverage as C
+        from grinos import sec
+        L, parts = self.ledger, arg.split()
+        if cmd == "cover":
+            if not parts:
+                return "Usage: /cover <TICKER> [AS_OF]"
+            cfg = COMPANIES_DIR / f"{parts[0].lower()}.yaml"
+            if not cfg.exists():
+                return f"No company config at {cfg}."
+            as_of = _date.fromisoformat(parts[1]) if len(parts) > 1 else _date.today()
+            from grinos import runtime
+            r = runtime.coverage(L, parts[0], as_of, str(cfg), self.sec_get or sec.http_get, user,
+                                 notify=self._notify(channel))
+            if r["via"] == "inline":
+                return C.summary(r["result"])
+            return (f"Started coverage of {parts[0].upper()} on Temporal ({r['workflow_id']}). I'll tell you "
+                    f"what each step needs; decide in the Coverage tab or with /cdecide.")
+        if cmd == "coverage":
+            if not parts:
+                return "\n".join(f"• {r['run_id']} {r['status']} at {r['step']}" for r in C.runs(L)[-10:]) or "No coverage runs."
+            return C.summary(C.resume(L, parts[0]))
+        if cmd == "risk":
+            head, _, kill = arg.partition("|")
+            bits = head.split(maxsplit=3)
+            if len(bits) < 4 or not kill.strip():
+                return "Usage: /risk <TICKER> <likelihood 1-5> <impact 1-5> <risk> | <kill criterion>"
+            e = C.record_risk(L, bits[0], bits[3], int(bits[1]), int(bits[2]), kill, user, channel=channel)
+            return f"Recorded risk {e['payload']['risk_id']} for {bits[0].upper()}."
+        if cmd == "stage":
+            bits = arg.split(maxsplit=2)
+            if len(bits) < 3:
+                return "Usage: /stage <TICKER> <Idea|Deep Dive|Watchlist|Owned|Rejected|Archived> <note>"
+            stage = "Deep Dive" if bits[1].lower() == "deep" and bits[2].lower().startswith("dive") else bits[1]
+            note = bits[2][4:].strip() if stage == "Deep Dive" else bits[2]
+            e = C.set_stage(L, bits[0], stage, user, note, channel=channel)
+            return f"{bits[0].upper()}: {e['payload']['from'] or '—'} → {e['payload']['to']}"
+        if len(parts) < 3:
+            return "Usage: /cdecide <run_id> <item> accept|keep|value [figure or word] <note>"
+        run_id, target, decision, *rest = parts
+        value, text = None, None
+        if decision == "value" and rest:
+            if target in ("k_direction", "k_nature"):
+                text, rest = rest[0], rest[1:]
+            else:
+                value, rest = Decimal(rest[0]), rest[1:]
+        C.decide(L, run_id, target, decision, user, " ".join(rest), value, text=text, channel=channel)
+        from grinos import runtime
+        runtime.changed(L, run_id)
+        return C.summary(C.resume(L, run_id))
+
     def _run_command(self, cmd: str, arg: str, user: str, channel: str) -> str:
         L = self.ledger
+        if cmd in {"cover", "coverage", "cdecide", "risk", "stage"}:
+            return self._coverage_command(cmd, arg, user, channel)
+        if cmd in {"promotions", "promote"}:
+            from grinos import improve, runtime
+            if cmd == "promotions":
+                rows = [improve.promotion_view(L, p) for p in improve.promotions(L)]
+                return "\n".join(f"• {v['promotion_id']} {v['agent']}: failing cases {v['failing_cases_before']} → "
+                                 f"{v['failing_cases_after']}" + (" (stale)" if v["stale"] else "") for v in rows) \
+                    or "No prompt promotions waiting."
+            bits = arg.split(maxsplit=2)
+            if len(bits) < 3 or bits[1] not in ("approve", "reject"):
+                return "Usage: /promote <promotion_id> approve|reject <note> (read the diff in the Evals tab first)"
+            improve.decide_promotion(L, bits[0], bits[1], user, bits[2], channel=channel)
+            sel = next(e for e in L.entries() if e["stage"] == "prompt_selected" and e["payload"]["promotion_id"] == bits[0])
+            runtime.changed(L, sel["run_id"])
+            return f"{bits[0]} {bits[1]}d." + (" The prompt is written; its eval re-runs, then commit it." if bits[1] == "approve" else "")
         if cmd in {"help", "start"}:
             return HELP
         if cmd == "pending":
@@ -291,6 +389,9 @@ class Desk:
             if not note.strip():
                 return f"Add a note: /{cmd} {pid or '<proposal_id>'} <why>"
             e = decide_proposal(L, pid, cmd, user, note.strip(), channel=channel)
+            from grinos import runtime
+            from grinos.proposals import proposal_state
+            runtime.changed(L, proposal_state(L)[pid]["proposal"]["run_id"])
             return f"✅ {pid} {PAST[cmd]} by {user} (ledger #{e['seq']})." + (f" Next: /publish {pid}" if cmd == "approve" else "")
         if cmd == "resolve":
             parts = arg.split(maxsplit=2)
@@ -305,7 +406,13 @@ class Desk:
             cfg = COMPANIES_DIR / f"{t.lower()}.yaml"
             if not cfg.exists():
                 return f"No config for {t} at {cfg}"
-            res = analyse(L, t, yaml.safe_load(cfg.read_text()), str(cfg), model=self.model)
+            from grinos import runtime
+            r = runtime.analyse(L, t, str(cfg), model=self.model, notify=self._notify(channel),
+                                wait_for_proposals=False)
+            if r["via"] == "temporal":
+                return (f"Started the mid-cycle analyst on {t} on Temporal ({r['workflow_id']}). "
+                        f"I'll message you when its proposals are ready to review.")
+            res = r["result"]
             lines = [f"• {p['proposal_id']} {'ok' if p['ok'] else 'FAILED CHECKS'} {p['field']} → {p['new_value']}"
                      for p in res["proposals"]]
             return "\n".join(lines + [f"No change: {res['no_change']}"])

@@ -34,6 +34,71 @@ def normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
 
 
+def normalise_with_map(text: str) -> tuple[str, list[int]]:
+    """normalise(text) built one raw character at a time, with idx[i] = the raw offset of normalised char i.
+    Matches normalise() except where NFKC composes across characters (combining marks); locate() checks."""
+    out: list[str] = []
+    idx: list[int] = []
+    space = True                                   # True at the start: leading whitespace is stripped
+    for i, ch in enumerate(text):
+        for c in unicodedata.normalize("NFKC", ch).translate(_PUNCT):
+            if c.isspace():
+                if not space:
+                    out.append(" ")
+                    idx.append(i)
+                    space = True
+                continue
+            for f in c.casefold():
+                out.append(f)
+                idx.append(i)
+            space = False
+    if out and out[-1] == " ":
+        out.pop()
+        idx.pop()
+    return "".join(out), idx
+
+
+MAX_MATCHES = 20
+
+
+def locate(raw: str, quote: str) -> list[tuple[int, int]]:
+    """Every [start, end) in the raw source whose normalised text is the normalised quote: the exact
+    span a reviewer sees highlighted. Empty when the quote isn't in the source."""
+    q = normalise(quote)
+    if not q:
+        return []
+    norm, idx = normalise_with_map(raw)
+    if norm != normalise(raw):                    # cross-character NFKC composition: slow, exact search
+        return _locate_slow(raw, q)
+    spans: list[tuple[int, int]] = []
+    at = norm.find(q)
+    while at >= 0 and len(spans) < MAX_MATCHES:
+        end = at + len(q)
+        # A match must start and end on whole raw characters ("ß" → "ss" can't be half-matched).
+        if (at == 0 or idx[at - 1] != idx[at]) and (end == len(norm) or idx[end] != idx[end - 1]):
+            spans.append((idx[at], idx[end - 1] + 1))
+        at = norm.find(q, at + 1)
+    return spans
+
+
+def _locate_slow(raw: str, q: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    width = len(q) * 2 + 16
+    for s in range(len(raw)):
+        if len(spans) >= MAX_MATCHES:
+            break
+        if raw[s].isspace() or not normalise(raw[s: s + width]).startswith(q):
+            continue
+        if spans and s < spans[-1][1]:
+            continue
+        e = s + 1
+        while normalise(raw[s:e]) != q and e <= s + width:
+            e += 1
+        if normalise(raw[s:e]) == q:
+            spans.append((s, e))
+    return spans
+
+
 _TABLE_SCALE = re.compile(r"\(in (thousands|millions)\b")
 
 
@@ -118,8 +183,8 @@ def context_window(source_text: str, quote: str, chars: int = 1500) -> str:
     """The part of the source the verifier agent reads: around the quote, or the whole thing if short."""
     if len(source_text) <= chars * 3:
         return source_text
-    i = normalise(source_text).find(normalise(quote))
-    if i < 0:
+    spans = locate(source_text, quote)
+    if not spans:
         return source_text[: chars * 2]
-    # Normalisation shifts offsets slightly; a generous window absorbs it.
-    return source_text[max(0, i - chars): i + len(quote) + chars]
+    start, end = spans[0]
+    return source_text[max(0, start - chars): end + chars]

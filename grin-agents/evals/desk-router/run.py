@@ -13,13 +13,13 @@ import statistics
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
-
+sys.path.insert(0, str(HERE.parent))
 from cases import CASES  # noqa: E402
+from common import results_dir  # noqa: E402
 
 from grinos.desk import Desk  # noqa: E402
 from grinos.ledger import Ledger  # noqa: E402
@@ -40,15 +40,15 @@ def main() -> int:
         picked = ["mid-cycle-analyst"] if args.system == "default" else desk.route(case["text"], "Everyone" in case["text"])
         return {"id": case["id"], "picked": picked,
                 "must": len(case["must"] & set(picked)) / len(case["must"]),
-                "precision": len(set(picked) & case["ok"]) / len(picked)}
+                "precision": len(set(picked) & case["ok"]) / len(picked),
+                "case_pass": case["must"] <= set(picked) and set(picked) <= case["ok"]}
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         rows = list(pool.map(one, [(c, r) for r in range(args.repeats) for c in CASES]))
     s = {"must_recall": statistics.mean(r["must"] for r in rows), "precision": statistics.mean(r["precision"] for r in rows)}
     passed = all(s[k] >= v for k, v in GATES.items())
     model = args.model if args.system == "agent" else "none"
-    out_dir = HERE / "results" / f"{datetime.now():%Y%m%d-%H%M%S}_{args.system}_{model}"
-    out_dir.mkdir(parents=True)
+    out_dir = results_dir(HERE, args.system, model)
     (out_dir / "report.json").write_text(json.dumps({"summary": s | {"passed": passed}, "rows": rows}, indent=2))
     print(f"# desk-router eval — {args.system} / {args.model if args.system == 'agent' else 'none'} (repeats={args.repeats})\n")
     for k, v in GATES.items():

@@ -33,7 +33,8 @@ from grinos.proposals import proposal_state
 from grinos.schemas import Actor, canonical, sha256
 
 SYSTEM = Actor(kind="system", name="longgamma", version="1")
-DS = DS | {"tasks": "7a182d84-de70-4ad6-abfd-6a0f91635cc1"}
+DS = DS | {"tasks": "7a182d84-de70-4ad6-abfd-6a0f91635cc1", "risks": "52af2810-eb46-4fb0-b5bc-9ad60f04c1b6",
+           "catalysts": "0b81c1d4-dea1-4af1-9939-287dd71feb6d"}
 MIN_CHANGE = 0.005               # ignore driver changes smaller than 0.5%
 BIG_MOVE = 0.30                  # PW Target move needing explicit confirmation
 DEFAULT_PROBS = {"Bear": 0.25, "Base": 0.5, "Bull": 0.25}
@@ -352,6 +353,70 @@ def sync_plan(ticker: str, new: dict, company: dict, today: str) -> dict:
             "needs_confirm": move is not None and abs(move) > BIG_MOVE, "net_debt": nd, "shares": sh}
 
 
+def drivers_from_coverage(ledger: Ledger, run_id: str) -> tuple[str, dict]:
+    """A complete coverage run → its LongGamma drivers (all three scenarios, set by Isaac in the run)."""
+    from grinos import coverage
+    v = coverage.view(ledger, run_id)
+    if (v["status"] or {}).get("status") != "complete":
+        raise NotPublishable(f"{run_id} is not complete")
+    lg = v["steps"]["valuation"]["output"]["longgamma"]
+    return v["request"]["ticker"], {k: val for k, val in lg.items() if val is not None}
+
+
+def risk_row(r: dict) -> dict:
+    """A coverage risk (Isaac's words and scores) → a Notion Risks row."""
+    return {"Risk": r["risk"], "Likelihood": r["likelihood"], "Impact": r["impact"], "Status": r["status"],
+            "Kill Criterion": r["kill_criterion"], "Structural/Cyclical": r.get("nature"), "Author": "Human",
+            "_risk_id": r["risk_id"]}
+
+
+def catalyst_row(ticker: str, k: dict) -> dict:
+    event = k["event"] if k["event"].startswith(f"{ticker} · ") else f"{ticker} · {k['type']} · {k['event']}"
+    return {"Event": event, "Type": k["type"], "Date": k["date"], "Date Confidence": k["date_confidence"],
+            "Scope": k["scope"], "Status": k["status"], "Expected Impact": k["expected_impact"], "Author": "Human",
+            "_catalyst_id": k["catalyst_id"]}
+
+
+RISK_KINDS = {"Risk": "title", "Status": "select", "Kill Criterion": "text", "Structural/Cyclical": "select",
+              "Author": "select"}
+CATALYST_KINDS = {"Event": "title", "Type": "select", "Date": "date", "Date Confidence": "select", "Scope": "select",
+                  "Status": "select", "Expected Impact": "select", "Author": "select"}
+CATALYST_DEDUP_DAYS = 14
+
+
+def _query(ds: str, flt: dict, token: str, request) -> list[dict]:
+    return request("POST", f"/data_sources/{DS[ds]}/query", {"filter": flt, "page_size": 25}, token).get("results", [])
+
+
+def push_risks(p: dict, rel: list[dict], token: str, request) -> dict:
+    """Search before create: a risk with the same title for the company is updated; a catalyst of the same
+    company and type within ±14 days is the same event (catalyst-scan's rule)."""
+    out: dict[str, list] = {"risks": [], "catalysts": []}
+    cid = rel[0]["id"]
+    for r in p["risks"]:
+        props = _props({k: v for k, v in r.items() if not k.startswith("_")}, RISK_KINDS) | {"Company": {"relation": rel}}
+        hits = _query("risks", {"and": [{"property": "Company", "relation": {"contains": cid}},
+                                        {"property": "Risk", "title": {"equals": r["Risk"]}}]}, token, request)
+        page = (request("PATCH", f"/pages/{hits[0]['id']}", {"properties": props}, token) if hits else
+                request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": DS["risks"]},
+                                           "properties": props}, token))
+        out["risks"].append({"id": page["id"], "url": page.get("url"), "updated": bool(hits)})
+    for k in p["catalysts"]:
+        props = _props({x: v for x, v in k.items() if not x.startswith("_")}, CATALYST_KINDS) | {"Company": {"relation": rel}}
+        d = date.fromisoformat(k["Date"])
+        hits = _query("catalysts", {"and": [
+            {"property": "Company", "relation": {"contains": cid}},
+            {"property": "Type", "select": {"equals": k["Type"]}},
+            {"property": "Date", "date": {"on_or_after": (d - timedelta(days=CATALYST_DEDUP_DAYS)).isoformat()}},
+            {"property": "Date", "date": {"on_or_before": (d + timedelta(days=CATALYST_DEDUP_DAYS)).isoformat()}}]},
+            token, request)
+        page = (request("PATCH", f"/pages/{hits[0]['id']}", {"properties": props}, token) if hits else
+                request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": DS["catalysts"]},
+                                           "properties": props}, token))
+        out["catalysts"].append({"id": page["id"], "url": page.get("url"), "updated": bool(hits)})
+    return out
+
+
 # --- prepare / go / push ------------------------------------------------------------------------
 
 def _id(kind: str, source_id: str) -> str:
@@ -381,8 +446,8 @@ def prepare(ledger: Ledger, kind: str, source_id: str, token: str | None = None,
     if ledger.audit():
         raise NotPublishable("ledger fails audit; refusing to prepare")
     lg_id = _id(kind, source_id)
-    if refresh and kind != "results":
-        raise NotPublishable("only a results note can be refreshed; a model sync is a decision, make a new one")
+    if refresh and kind not in ("results", "risks"):
+        raise NotPublishable("only a results note or a risk set can be refreshed; a model sync is a decision, make a new one")
     if "lg_pushed" in _entries(ledger, lg_id) and not refresh:
         raise NotPublishable(f"{lg_id} is already in Notion (grinos capture results {source_id} --refresh to rebuild it)")
     today = today or date.today().isoformat()
@@ -400,6 +465,8 @@ def prepare(ledger: Ledger, kind: str, source_id: str, token: str | None = None,
         elif source_id.startswith("analysis_"):
             ticker, new, included = drivers_from_analysis(ledger, source_id)
             new = new | {"_proposals": included}
+        elif source_id.startswith("cov_"):
+            ticker, new = drivers_from_coverage(ledger, source_id)
         else:
             s = proposal_state(ledger).get(source_id) or {}
             ticker, new = (s.get("proposal") or {}).get("payload", {}).get("company"), drivers_from_proposal(ledger, source_id)
@@ -409,8 +476,18 @@ def prepare(ledger: Ledger, kind: str, source_id: str, token: str | None = None,
         company = read_company(ticker, token, request)
         payload = {"kind": "sync", "source_id": source_id, "ticker": ticker, "drivers": new,
                    "plan": sync_plan(ticker, new, company, today) if company else None}
+    elif kind == "risks":
+        from grinos import coverage
+        v = coverage.view(ledger, source_id)
+        if (v["status"] or {}).get("status") != "complete":
+            raise NotPublishable(f"{source_id} is not complete")
+        ticker = v["request"]["ticker"]
+        company = read_company(ticker, token, request)
+        payload = {"kind": "risks", "source_id": source_id, "ticker": ticker,
+                   "risks": [risk_row(r) for r in v["risks"]],
+                   "catalysts": [catalyst_row(ticker, k) for k in v["catalysts"]]}
     else:
-        raise ValueError("kind is results or sync")
+        raise ValueError("kind is results, sync or risks")
     if not company:
         raise NotPublishable(f"{ticker} is not in Notion Companies: run longgamma-initiate-coverage first")
     payload |= {"company_id": company["id"], "today": today}
@@ -444,7 +521,8 @@ def _props(values: dict, kinds: dict) -> dict:
         if v is None:
             continue
         t = kinds.get(k, "number")
-        out[k] = ({"title": _text(v)} if t == "title" else {"select": {"name": v}} if t == "select"
+        out[k] = ({"title": _text(v)} if t == "title" else {"rich_text": _text(v)} if t == "text"
+                  else {"select": {"name": v}} if t == "select"
                   else {"date": {"start": v}} if t == "date" else {"url": v} if t == "url"
                   else {"number": v})
     return out
@@ -469,7 +547,9 @@ def push(ledger: Ledger, lg_id: str, token: str | None = None, request=_request)
     p = es["lg_prepared"]["payload"]
     rel = [{"id": p["company_id"]}]
     written: dict[str, Any] = {}
-    if p["kind"] == "results":
+    if p["kind"] == "risks":
+        written |= push_risks(p, rel, token, request)
+    elif p["kind"] == "results":
         n = {k: v for k, v in p["note"].items() if k != "body"}
         props = _props(n, NOTE_KINDS) | {"Company": {"relation": rel}}
         if p.get("feeds_into"):
@@ -567,6 +647,13 @@ def pending(ledger: Ledger) -> list[dict]:
             label = f"{e['payload']['source']['company']} {e['payload']['source']['kind']} {e['payload']['source']['published_at']}"
         elif e["stage"] == "valuation_status" and e["payload"]["status"] == "complete":
             sid, kind, label = e["run_id"], "sync", f"valuation {e['run_id']}"
+        elif e["stage"] == "coverage_status" and e["payload"]["status"] == "complete":
+            for k, lab in (("sync", "coverage drivers"), ("risks", "coverage risks and catalysts")):
+                lg = _id(k, e["run_id"])
+                if lg not in done and all(x["id"] != lg for x in out):
+                    out.append({"id": lg, "kind": k, "source_id": e["run_id"], "label": f"{lab} {e['run_id']}",
+                                "state": "prepared" if lg in prepared else "not prepared"})
+            continue
         elif e["stage"] == "approval" and e["payload"]["decision"] == "approve":
             # A run's approved proposals sync together (one at a time, the last would overwrite the others).
             run = runs_of.get(e["payload"]["proposal_id"])
@@ -583,6 +670,12 @@ def pending(ledger: Ledger) -> list[dict]:
 
 def describe(payload: dict) -> str:
     """The diff table / note preview shown before go or push."""
+    if payload["kind"] == "risks":
+        lines = [f"Risks and catalysts for {payload['ticker']} from {payload['source_id']} (your entries, Author Human)"]
+        lines += [f"  risk: {r['Risk']} · L{r['Likelihood']} × I{r['Impact']} · {r['Status']} · kill: {r['Kill Criterion']}"
+                  for r in payload["risks"]]
+        lines += [f"  catalyst: {k['Event']} · {k['Date']} ({k['Date Confidence']})" for k in payload["catalysts"]]
+        return "\n".join(lines)
     if payload["kind"] == "results":
         n = payload["note"]
         lines = [f"Research Note: {n['Title']} · {n['Type']} · Valuation Impact {n['Valuation Impact']} "

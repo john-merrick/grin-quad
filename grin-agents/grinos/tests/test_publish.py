@@ -10,6 +10,7 @@ from grinos.ledger import Ledger
 from grinos.notion import NotPublishable
 from grinos.pipeline import ingest
 from grinos.proposals import analyse, decide_proposal, pending
+from grinos.tests.review_helpers import confirm_all
 
 ROOT = Path(__file__).parents[2]
 CONFIG = yaml.safe_load((ROOT / "evals/config-auditor/cases/clean_base/acme.yaml").read_text())
@@ -51,6 +52,7 @@ def test_valid_proposal_flows_to_publication(ledger, monkeypatch):
 
     with pytest.raises(NotPublishable, match="not been approved"):
         notion.build_publication(ledger, pid)
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "agree: private label is structural")
     pub = notion.build_publication(ledger, pid)
     assert [r["Field"] for r in pub["valuation_log"]] == ["Sustainable EBIT"]
@@ -113,6 +115,7 @@ def test_tax_change_maps_to_model_rebuild(ledger, monkeypatch):
     _stub_analyst(monkeypatch, [{"field": "tax_rate", "new_value": 0.21, "nature": "structural",
                                  "rationale": "r", "cites": [_cid(ledger)]}])
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "ok")
     assert [r["Field"] for r in notion.build_publication(ledger, pid)["valuation_log"]] == ["Model Rebuild"]
 
@@ -121,6 +124,7 @@ def test_tampered_outbox_refuses_push(ledger, monkeypatch):
     _stub_analyst(monkeypatch, [{"field": "mid_cycle_ebit", "new_value": 146.4, "nature": "structural",
                                  "rationale": "r", "cites": [_cid(ledger)]}])
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "ok")
     path = notion.prepare(ledger, pid)
     path.write_text(path.read_text().replace("146.4", "999.9"))
@@ -139,6 +143,7 @@ def test_push_refuses_company_missing_from_notion(ledger, monkeypatch):
     _stub_analyst(monkeypatch, [{"field": "mid_cycle_ebit", "new_value": 146.4, "nature": "structural",
                                  "rationale": "r", "cites": [_cid(ledger)]}])
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "ok")
     notion.prepare(ledger, pid)
     calls = []
@@ -178,3 +183,32 @@ def test_rerun_supersedes_older_proposals(ledger, monkeypatch):
     with pytest.raises(ValueError, match="superseded"):
         decide_proposal(ledger, old, "approve", "isaac", "n")
     decide_proposal(ledger, old, "reject", "isaac", "n")   # rejecting an old one is still allowed
+
+
+def test_analyse_rerun_with_same_run_id_is_a_no_op(ledger, monkeypatch):
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        return {"proposals": [{"field": "mid_cycle_ebit", "new_value": 146.4, "nature": "structural",
+                               "rationale": "r", "cites": [_cid(ledger)]}], "no_change": ""}, {"cost_usd": 0}
+    monkeypatch.setattr(analyst, "call_agent", fake)
+    first = analyse(ledger, "ACME", CONFIG, "acme.yaml", run_id="analysis_fixed")
+    n = len(list(ledger.entries()))
+    again = analyse(ledger, "ACME", CONFIG, "acme.yaml", run_id="analysis_fixed")
+    assert again["proposals"] == first["proposals"] and len(calls) == 1 and len(list(ledger.entries())) == n
+
+
+def test_analyse_resumes_from_recorded_output_without_calling_the_model_again(ledger, monkeypatch):
+    calls = []
+    monkeypatch.setattr(analyst, "call_agent", lambda *a, **k: (calls.append(1) or (
+        {"proposals": [{"field": "mid_cycle_ebit", "new_value": 146.4, "nature": "structural", "rationale": "r",
+                        "cites": [_cid(ledger)]}], "no_change": ""}, {})))
+    from grinos import proposal_check as pc
+    real = pc.check_proposal
+    monkeypatch.setattr(pc, "check_proposal", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash")))
+    with pytest.raises(RuntimeError):
+        analyse(ledger, "ACME", CONFIG, "acme.yaml", run_id="analysis_crash")
+    monkeypatch.setattr(pc, "check_proposal", real)
+    res = analyse(ledger, "ACME", CONFIG, "acme.yaml", run_id="analysis_crash")
+    assert len(calls) == 1 and len(res["proposals"]) == 1 and ledger.audit() == []

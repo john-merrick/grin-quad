@@ -30,13 +30,11 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-import yaml
-
 from grinos import notion
 from grinos.env import load_env
 from grinos.ledger import Ledger, LedgerCorrupt
-from grinos.pipeline import human_verdict, ingest
-from grinos.proposals import PAST, analyse, decide_proposal, pending, proposal_state
+from grinos.pipeline import human_verdict
+from grinos.proposals import PAST, decide_proposal, pending, proposal_state
 
 
 def default_root() -> Path:
@@ -51,10 +49,11 @@ def cmd_ingest(args) -> int:
     meta = {"uri": args.uri or str(Path(args.source).resolve()), "kind": args.kind,
             "company": args.company, "published_at": date.fromisoformat(args.published)}
     claims = json.loads(Path(args.claims).read_text()) if args.claims else None   # None → extractor runs
-    config = yaml.safe_load(Path(args.config).read_text()) if args.config else None
-    s = ingest(_ledger(args), Path(args.source).read_bytes(), meta, claims,
-               date.fromisoformat(args.as_of), config, model=args.model)
-    print(f"{s['run_id']}  ({len(s['claims'])} claims)\n")
+    from grinos import runtime
+    r = runtime.ingest(_ledger(args), Path(args.source).read_bytes(), meta, claims, date.fromisoformat(args.as_of),
+                       args.config, model=args.model)
+    s = r["result"]
+    print(f"{s['run_id']}  ({len(s['claims'])} claims) via {r['via']}\n")
     for r in s["claims"]:
         print(f"  {r['claim_id']}  {r['action']:<8} {r['nature']:<15} {str(r['lever']):<15} "
               f"{r['verdict'] or '-':<12} {r['statement'][:60]}")
@@ -181,6 +180,112 @@ def cmd_value(args) -> int:
     return 0 if r["status"] in ("complete", "blocked") else 1
 
 
+def cmd_improve(args) -> int:
+    from grinos import improve
+    ledger = _ledger(args)
+    if args.action == "list":
+        for p in improve.promotions(ledger):
+            v = improve.promotion_view(ledger, p)
+            print(f"{v['promotion_id']}  {v['agent']}  failing cases {v['failing_cases_before']} → {v['failing_cases_after']}"
+                  + ("  (STALE: prompt changed since)" if v["stale"] else ""))
+        return 0
+    if args.action == "show":
+        p = next(p for p in improve.promotions(ledger) if p["promotion_id"] == args.target)
+        v = improve.promotion_view(ledger, p)
+        print(v["rationale"] + "\n\n" + v["diff"] + "\n")
+        for c in v["cases"]:
+            print(f"  {c['id']:<30} {c['before']} → {c['after']}")
+        return 0
+    if args.action in ("approve", "reject"):
+        improve.decide_promotion(ledger, args.target, args.action, args.who, args.note or "")
+        from grinos import runtime
+        sel = next(e for e in ledger.entries() if e["stage"] == "prompt_selected"
+                   and e["payload"]["promotion_id"] == args.target)
+        runtime.changed(ledger, sel["run_id"])
+        print(f"{args.target} {args.action}d" + (": prompt written; re-run its eval and commit" if args.action == "approve" else ""))
+        return 0
+    from grinos.temporal import client
+    if args.action == "start":
+        r = client.start(ledger, "Improvement", improve.workflow_args(args.target), improve.workflow_id(args.target))
+        print(f"{r['workflow_id']} ({'started' if r['started'] else 'already running'})")
+        return 0
+    if args.action == "schedule":
+        import asyncio
+        sys.path.insert(0, str(Path(__file__).parents[1] / "evals"))
+        from run_all import SUITE
+        print("\n".join(asyncio.run(improve.schedule_weekly([a for a in SUITE if a != "prompt-optimiser"]))))
+        return 0
+    return 2
+
+
+def cmd_worker(args) -> int:
+    from grinos.temporal.worker import main
+    return main()
+
+
+def cmd_coverage(args) -> int:
+    from datetime import date as _date
+
+    from grinos import coverage as C
+    ledger = _ledger(args)
+    a = args.action
+    if a == "start":
+        if args.offline or args.refresh:
+            print(C.summary(C.start(ledger, args.target, _date.fromisoformat(args.as_of), args.config, _getter(args),
+                                    who=args.who, refresh=args.refresh)))
+            return 0
+        from grinos import runtime
+        r = runtime.coverage(ledger, args.target, _date.fromisoformat(args.as_of), args.config, _getter(args), args.who)
+        print(C.summary(r["result"]) if r["via"] == "inline" else
+              f"started on Temporal: {r['workflow_id']} ({'new' if r['started'] else 'already running'}); "
+              f"grinos coverage list shows where it is")
+        return 0
+    if a == "list":
+        for row in C.runs(ledger):
+            pw = f"PW {row['pw_target']:,.2f}" if row.get("pw_target") is not None else ""
+            print(f"{row['run_id']}  {row['status']:<10} {row['step'] or '-':<10} stage {row['stage'] or '—':<10} {pw}")
+        return 0
+    if a in ("show", "resume"):
+        if a == "resume":
+            print(C.summary(C.resume(ledger, args.target)))
+        else:
+            v = C.view(ledger, args.target)
+            from grinos.xbrl import to_jsonable
+            print(json.dumps(to_jsonable({k: v[k] for k in ("request", "status", "decisions", "stage", "risks")}),
+                  indent=2, default=str))
+        return 0
+    if a == "decide":
+        from grinos import runtime
+        C.decide(ledger, args.target, args.item, args.decision, args.who, args.note or "",
+                 Decimal(args.value) if args.value else None, text=args.text, revise=args.revise)
+        runtime.changed(ledger, args.target)
+        print(C.summary(C.resume(ledger, args.target)))
+        return 0
+    if a == "risk":
+        e = C.record_risk(ledger, args.target, args.text or "", args.likelihood, args.impact, args.kill or "",
+                          args.who, status=args.status, nature=args.nature,
+                          cites=[c for c in (args.cites or "").split(",") if c])
+        print(f"recorded risk {e['payload']['risk_id']} (#{e['seq']})")
+        return 0
+    if a == "catalyst":
+        e = C.record_catalyst(ledger, args.target, args.text or "", args.date, args.who, type_=args.type,
+                              date_confidence=args.confidence)
+        print(f"recorded catalyst {e['payload']['catalyst_id']} (#{e['seq']})")
+        return 0
+    if a == "stage":
+        e = C.set_stage(ledger, args.target, args.item, args.who, args.note or "")
+        print(f"{args.target}: {e['payload']['from'] or '—'} → {e['payload']['to']}")
+        return 0
+    if a == "apply":
+        e = C.apply(ledger, args.target, args.who, args.note or "")
+        print(f"wrote {e['payload']['path']} (before: blob {e['payload']['before_blob'][:12]}; #{e['seq']})")
+        return 0
+    if a == "candidate":
+        print(C.config_candidate(ledger, args.target))
+        return 0
+    return 2
+
+
 def cmd_valuation(args) -> int:
     from grinos import valuation as V
     ledger = _ledger(args)
@@ -206,10 +311,11 @@ def cmd_valuation(args) -> int:
 
 
 def cmd_analyse(args) -> int:
-    config = yaml.safe_load(Path(args.config).read_text())
-    res = analyse(_ledger(args), args.company, config, args.config, model=args.model,
-                  net_debt=args.net_debt, shares=args.shares)
-    print(f"{res['run_id']}\n")
+    from grinos import runtime
+    r = runtime.analyse(_ledger(args), args.company, args.config, model=args.model, net_debt=args.net_debt,
+                        shares=args.shares)
+    res = r["result"]
+    print(f"{res['run_id']} via {r['via']}\n")
     for p in res["proposals"]:
         imp = p["impact"] or {}
         print(f"  {p['proposal_id']}  {'OK  ' if p['ok'] else 'FAIL'} {p['field']} → {p['new_value']}  "
@@ -259,7 +365,7 @@ def cmd_capture(args) -> int:
                 print(f"{r['id']:<58} {r['state']:<13} {r['label']}")
             print(f"{len(rows)} completed item(s) not yet in Notion" if rows else "everything completed is in Notion")
             return 0
-        if args.kind in ("results", "sync"):
+        if args.kind in ("results", "sync", "risks"):
             p = LG.prepare(ledger, args.kind, args.source_id, refresh=args.refresh)
             print(LG.describe(p))
             lg = LG._id(args.kind, args.source_id)
@@ -402,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="sonnet")
     p.set_defaults(fn=cmd_telegram)
     p = sub.add_parser("capture", help="completed research → the LongGamma Notion workflow")
-    p.add_argument("kind", nargs="?", choices=["list", "results", "sync", "go", "push"], default="list")
+    p.add_argument("kind", nargs="?", choices=["list", "results", "sync", "risks", "go", "push"], default="list")
     p.add_argument("source_id", nargs="?", help="results: ingest run · sync: valuation run or proposal · go/push: lg_… id")
     p.add_argument("--rationale", help="go: your rationale, written verbatim into the rationale note")
     p.add_argument("--confirm", help="go: the ticker, when PW Target moves more than 30%%")
@@ -419,6 +525,42 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--who", default=os.environ.get("USER", "analyst"))
     p.add_argument("--narrative", action="store_true", help="add a model-drafted, validated narrative (memo-writer)")
     p.set_defaults(fn=cmd_value)
+    p = sub.add_parser("improve", help="the eval-driven prompt improvement loop: start, list, show, approve, reject, schedule")
+    p.add_argument("action", choices=["start", "list", "show", "approve", "reject", "schedule"])
+    p.add_argument("target", nargs="?", help="start: the agent · show/approve/reject: the promotion id")
+    p.add_argument("--note")
+    p.add_argument("--who", default=os.environ.get("USER", "analyst"))
+    p.set_defaults(fn=cmd_improve)
+    p = sub.add_parser("worker", help="serve every Grin OS task queue on the local Temporal server")
+    p.set_defaults(fn=cmd_worker)
+    p = sub.add_parser("coverage", help="the LongGamma process, step by step to a verified distval valuation", description=(
+        "start TICKER --as-of D --config Y | list | show RUN | resume RUN | decide RUN ITEM accept|value|keep "
+        "[--value N | --text T] --note … [--revise] | risk TICKER --text … --likelihood 1-5 --impact 1-5 --kill … | "
+        "catalyst TICKER --text … --date D | stage TICKER STAGE --note … | candidate RUN | apply RUN --note …"))
+    p.add_argument("action", choices=["start", "list", "show", "resume", "decide", "risk", "catalyst", "stage",
+                                      "candidate", "apply"])
+    p.add_argument("target", nargs="?", help="ticker or coverage run id")
+    p.add_argument("item", nargs="?", help="decide: the item id · stage: the new stage")
+    p.add_argument("decision", nargs="?", choices=["accept", "value", "keep", "reject"])
+    p.add_argument("--as-of")
+    p.add_argument("--config", help="the distval company YAML")
+    p.add_argument("--offline", help="folder of saved SEC responses instead of the network")
+    p.add_argument("--refresh", action="store_true")
+    p.add_argument("--value")
+    p.add_argument("--text", help="decide: Long/Short, Structural/Cyclical/Mixed · risk / catalyst: the description")
+    p.add_argument("--note")
+    p.add_argument("--revise", action="store_true", help="replace an earlier decision (recorded, history kept)")
+    p.add_argument("--likelihood", type=int)
+    p.add_argument("--impact", type=int)
+    p.add_argument("--kill", help="risk: a measurable kill criterion")
+    p.add_argument("--status", default="Active")
+    p.add_argument("--nature", choices=["Structural", "Cyclical"])
+    p.add_argument("--cites", help="risk: comma-separated claim ids")
+    p.add_argument("--date", help="catalyst date YYYY-MM-DD")
+    p.add_argument("--type", default="Results")
+    p.add_argument("--confidence", default="Window", choices=["Exact", "Window"])
+    p.add_argument("--who", default=os.environ.get("USER", "analyst"))
+    p.set_defaults(fn=cmd_coverage)
     p = sub.add_parser("valuation", help="list, show, resume or decide on valuation runs")
     p.add_argument("action", choices=["list", "show", "resume", "decide", "memo"])
     p.add_argument("run_id", nargs="?")

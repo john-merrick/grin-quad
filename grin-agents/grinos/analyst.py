@@ -32,16 +32,21 @@ PROPOSALS_SCHEMA = {
 }
 
 
-def analyst_message(company: str, config: dict, evidence: list[dict]) -> str:
+def analyst_message(company: str, config: dict, evidence: list[dict], perspectives: list[dict] | None = None) -> str:
     items = [{"claim_id": e["claim_id"], "nature": e.get("nature"), "lever": e.get("lever"), **e["claim"]}
              for e in evidence]
-    return (
+    msg = (
         f"Review the verified evidence for {company} against its current valuation config and "
         f"propose any assumption changes.\n\n"
         f"<current_config>\n{json.dumps(config, indent=2, default=str)}\n</current_config>\n\n"
         f"<verified_evidence>\n{fence(json.dumps(items, indent=2))}\n</verified_evidence>"
     )
+    if perspectives:
+        msg += f"\n\n<human_perspectives>\n{fence(json.dumps(perspectives, indent=2))}\n</human_perspectives>"
+    return msg
 
 
-def propose(company: str, config: dict, evidence: list[dict], model: str = "sonnet") -> tuple[dict | None, dict]:
-    return call_agent("mid-cycle-analyst", analyst_message(company, config, evidence), PROPOSALS_SCHEMA, model=model)
+def propose(company: str, config: dict, evidence: list[dict], model: str = "sonnet",
+            perspectives: list[dict] | None = None) -> tuple[dict | None, dict]:
+    return call_agent("mid-cycle-analyst", analyst_message(company, config, evidence, perspectives),
+                      PROPOSALS_SCHEMA, model=model)

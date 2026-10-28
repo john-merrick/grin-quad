@@ -19,6 +19,8 @@ HERE = Path(__file__).parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
+from common import append_history, metrics, per_case, publish  # noqa: E402
+
 from grinos.llm import agent_actor  # noqa: E402
 
 # agent -> (eval dir, production model, repeats)
@@ -28,10 +30,12 @@ SUITE = {
     "verifier": ("verifier", "sonnet", 2),
     "claim-extractor": ("claim-extractor", "sonnet", 2),
     "mid-cycle-analyst": ("analyst", "sonnet", 2),
-    "desk-router": ("desk-router", "haiku", 2),
+    "orchestrator": ("orchestrator", "sonnet", 2),     # replaced desk-router as the only conversational agent
+    "prompt-optimiser": ("prompt-optimiser", "sonnet", 2),
     "memo-writer": ("memo-writer", "sonnet", 2),
 }
 STATUS = HERE / "STATUS.json"
+HISTORY = HERE / "history.jsonl"     # every run, per prompt version: the trend the improvement loop reads
 
 
 def latest_report(eval_dir: str, model: str) -> dict | None:
@@ -60,6 +64,10 @@ def main() -> int:
             "cost_usd": summary.get("cost_usd"),
             "gates": summary.get("gates"),
         }
+        trace_id = publish(agent, report, status[agent]["prompt_version"], model) if report else None
+        status[agent]["trace_id"] = trace_id
+        append_history(HISTORY, status[agent] | {"agent": agent, "metrics": metrics(summary),
+                                                 "per_case": per_case(report) if report else {}})
         print(f"   {'PASS' if status[agent]['passed'] else 'FAIL'}  cost=${summary.get('cost_usd')}")
     STATUS.write_text(json.dumps(status, indent=2) + "\n")
     failed = [a for a, s in status.items() if not s["passed"]]

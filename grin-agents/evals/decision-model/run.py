@@ -15,15 +15,15 @@ import json
 import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 import yaml
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parents[1]))
-
+sys.path.insert(0, str(HERE.parent))
 from cases import CASES  # noqa: E402
+from common import results_dir  # noqa: E402
 
 from grinos.decide import decide_claim  # noqa: E402
 
@@ -34,7 +34,8 @@ GATES = {"lost_evidence_rate": ("<=", 0.0), "action_accuracy": (">=", 0.9), "nat
 def grade(case: dict, res: dict) -> dict:
     return {"id": case["id"], "relevant": case["relevant"], "action": res["action"], "nature": res["nature"],
             "action_ok": res["action"] in case["action"], "nature_ok": res["nature"] in case["nature"],
-            "lost": case["relevant"] and res["action"] == "discard"}
+            "lost": case["relevant"] and res["action"] == "discard",
+            "case_pass": res["action"] in case["action"] and (not case["relevant"] or res["nature"] in case["nature"])}
 
 
 def summarise(rows: list[dict]) -> dict:
@@ -56,8 +57,7 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=6)
     args = ap.parse_args()
     model = args.model if args.system == "agent" else "none"
-    out_dir = HERE / "results" / f"{datetime.now():%Y%m%d-%H%M%S}_{args.system}_{model}"
-    out_dir.mkdir(parents=True)
+    out_dir = results_dir(HERE, args.system, model)
 
     def one(job):
         case, rep = job

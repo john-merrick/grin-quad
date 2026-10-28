@@ -12,6 +12,7 @@ from grinos.graph import Graph, agree, normalise_period, why
 from grinos.ledger import Ledger
 from grinos.pipeline import human_verdict, ingest
 from grinos.proposals import analyse, decide_proposal
+from grinos.tests.review_helpers import confirm_all
 
 ROOT = Path(__file__).parents[2]
 CONFIG = yaml.safe_load((ROOT / "evals/config-auditor/cases/clean_base/acme.yaml").read_text())
@@ -91,6 +92,7 @@ def test_graph_rebuilds_when_the_ledger_moves_on(ledger, monkeypatch):
         {"field": "gross_margin", "new_value": [0.33] * 5, "nature": "structural", "rationale": "mix shift",
          "cites": [_id(ledger, "Gross margin was 33.")]}], "no_change": ""}, {}))
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
+    confirm_all(ledger, pid)
     decide_proposal(ledger, pid, "approve", "isaac", "private label is structural")
     g = Graph.open(ledger)
     assert g.stats()["edges"]["CITES"] == before + 1

@@ -11,6 +11,7 @@ from grinos.ledger import Ledger
 from grinos.pipeline import ingest
 from grinos.proposals import analyse
 from grinos.telegram import Bot, split
+from grinos.tests.review_helpers import confirm_all
 
 ROOT = Path(__file__).parents[2]
 CONFIG = yaml.safe_load((ROOT / "evals/config-auditor/cases/clean_base/acme.yaml").read_text())
@@ -41,6 +42,8 @@ class FakeAPI:
 def fake_agents(name, message, schema, model="sonnet", timeout=600, system_prompt=None):
     if name == "desk-router":
         return {"agents": ["mid-cycle-analyst"], "why": "t"}, {}
+    if name == "orchestrator":
+        return {"reply": "orchestrator reply", "actions": [], "consults": []}, {}
     if name == "decision-model":
         return {"action": "verify", "nature": "structural", "materiality": "high", "rationale": "s"}, {}
     if name == "verifier":
@@ -74,7 +77,7 @@ def _msg(text=None, uid=ME, chat_type="private", chat_id=ME, **extra):
 def test_allowlisted_text_gets_labelled_reply(ledger):
     bot, api = _bot(ledger)
     bot.handle_update(_msg("what's ACME's margin?"))
-    assert api.sent == [(ME, "🧮 Analyst: mid-cycle-analyst reply")]
+    assert api.sent == [(ME, "🗂 Grin: orchestrator reply")]
     msgs = [e for e in ledger.entries() if e["stage"] == "message"]
     assert msgs[-2]["actor"]["name"] == "tg:42(isaac)" and msgs[-2]["payload"]["thread"] == str(ME)
 
@@ -108,6 +111,7 @@ def test_approve_via_telegram_records_channel(ledger, monkeypatch):
         "no_change": ""}, {}))
     pid = analyse(ledger, "ACME", CONFIG, "acme.yaml")["proposals"][0]["proposal_id"]
     bot, api = _bot(ledger)
+    confirm_all(ledger, pid)
     bot.handle_update(_msg(f"/approve {pid} private label is structural"))
     assert f"{pid} approved" in api.sent[-1][1]
     appr = [e for e in ledger.entries() if e["stage"] == "approval"][-1]
@@ -120,7 +124,7 @@ def test_voice_note_transcribed_answered_and_spoken(ledger, monkeypatch):
     bot, api = _bot(ledger, FakeAPI({"f1": b"voice-bytes"}))
     bot.handle_update(_msg(voice={"file_id": "f1"}))
     assert api.sent[0][1] == "🎙️ heard: what is the margin"
-    assert api.sent[1][1].startswith("🧮 Analyst:")
+    assert api.sent[1][1].startswith("🗂 Grin:")
     assert len(api.voices) == 1 and api.voices[0][1].startswith(b"OGG")
     inbound = [e for e in ledger.entries() if e["stage"] == "message" and e["actor"]["kind"] == "human"][-1]
     assert ledger.get_blob(inbound["payload"]["audio_blob"]) == b"voice-bytes"
@@ -139,7 +143,6 @@ def test_voice_without_voicestudio_falls_back_to_text(ledger, monkeypatch):
 
 
 def test_document_ingest(ledger, monkeypatch):
-    monkeypatch.setattr(telegram, "ingest", lambda *a, **k: ingest(*a, **k))
     import grinos.extract as extract
     monkeypatch.setattr(extract, "call_agent", fake_agents)
     bot, api = _bot(ledger, FakeAPI({"d1": SOURCE, "bin": b"\xff\xfe\x00"}))

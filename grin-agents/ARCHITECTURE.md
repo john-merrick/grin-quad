@@ -17,6 +17,16 @@ finished, decision-ready outputs.
 5. **Deterministic first.** Rules and arithmetic run before any LLM, and both are recorded.
 6. **Eval first.** No stage ships without an eval that fails a do-nothing baseline
    (`skills/eval-first-agent`).
+7. **Three layers, one truth.**
+   - **The ledger** is truth.
+   - **Temporal** is execution: durable, retryable, visible.
+   - **Traces** are observation: `var/traces`, plus Langfuse.
+
+   A lost signal or a dead worker never loses work. Every ledger write is idempotent
+   (`append_once`), and workflows re-read the ledger.
+8. **One counterpart, human judgement kept human.** Isaac talks to the orchestrator only.
+   Approvals, disputes, coverage decisions, risks, stages, Notion goes and prompt promotions are
+   always his own commands.
 
 ## Evidence pipeline
 
@@ -77,6 +87,28 @@ var/               runtime data, gitignored: store/blobs, ledger.jsonl
 | 8 | history + research graph | `tools/edgar.py` + `bulk_ingest.py` (3 years of POOL/FAST/GWW earnings releases); `grinos/graph.py`, a rebuildable SQLite projection of the ledger; `/why` | done |
 
 | 9 | fundamental valuation | `distval/fcff.py` (FCFF/WACC math), `grinos/sec.py`, `xbrl.py`, `valuation.py`, `valuation_memo.py`, `narrative.py` + memo-writer agent; CLI, desk, dashboard, graph | done; memo-writer passes on Sonnet |
+| 10 | foundations | `Ledger.append_once`; stable analysis, proposal and ingest ids; token usage; per-case eval results (`evals/common.py`) | done |
+| 11 | evidence review | `evidence_check.locate` (exact raw spans); `grinos/review.py`; the review pop-up; the review gate on every channel; perspectives as analyst context | done; analyst eval re-run with perspective cases |
+| 12 | tracing | `grinos/trace.py` (local JSONL + Langfuse ingestion API); spans on agent calls, ingest, steps, turns, activities; eval runs as traces, plus `history.jsonl`; Ops tab | done |
+| 13 | coverage | `grinos/steps.py` (shared step machine); `drivers.py` (XBRL → distval drivers with provenance); `coverage.py`; LongGamma sync and risks/catalysts contracts; graph drivers and risks; Coverage tab | done |
+| 14 | Temporal | `grinos/temporal/` (activities on per-agent queues, workflows, worker, client); `runtime.py`; inline fallback recorded | done; workflow tests on the local dev server |
+| 15 | orchestrator | `agents/orchestrator.md`, `grinos/orchestrator.py`; every channel's free text; replaces desk-router | done; orchestrator passes on Sonnet |
+| 16 | improvement loop | `agents/prompt-optimiser.md`, `grinos/improve.py`, the Improvement workflow and weekly schedules; promotions in the Evals tab, `/promote` | done; prompt-optimiser passes on Sonnet |
+
+## Ledger stages added in phases 10–16
+
+| stage | actor | what |
+|---|---|---|
+| `evidence_review` | human | confirm or dispute one cited claim, in the context of a proposal (first is final) |
+| `feedback` | human | a perspective, correction, dispute or praise on any target; perspectives reach the analyst, corrections reach the improvement loop |
+| `analysis_output` | agent | the analyst's raw output, recorded once so a retry never re-asks |
+| `coverage_request`, `coverage_step`, `coverage_status`, `coverage_decision` | human / rule | the coverage run (grinos.steps); a revision is a new decision with `revises` |
+| `risk`, `catalyst`, `coverage_stage`, `config_applied` | human | Isaac's risks, catalysts and stage moves; the YAML written from a coverage run |
+| `workflow_started`, `workflow_link`, `execution` | system | which workflow drives which run; work that ran inline because Temporal was down |
+| `notification` | system | what a workflow told Isaac, once (idempotent) |
+| `orchestrator_plan` | agent | each turn's plan, what ran, what was dropped, any figures removed |
+| `improvement_started`, `prompt_candidate`, `candidate_eval`, `prompt_selected`, `no_winner` | system / agent | one round of the improvement loop |
+| `prompt_promotion_decision`, `prompt_promoted` | human / system | Isaac's decision; the prompt written |
 
 ## Fundamental valuation workflow
 
