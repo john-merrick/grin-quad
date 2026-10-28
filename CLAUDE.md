@@ -7,6 +7,15 @@
 
 Isaac talks to the orchestrator only. It plans the work, which runs on Temporal (`grinos worker`; UI `127.0.0.1:8233`), and the ledger stays the record of truth. Proposals are approved only after every cited claim is confirmed in the review pop-up. Valuations go through `grinos coverage`, one verified step at a time. Prompts improve through `grinos improve`, and go live only on his approval.
 
+## Keep the Home page current
+
+The dashboard's Home page is how Isaac follows along. With every change to the app, update
+`grin-agents/docs/guide.yaml` in the same change:
+- add a `whats_new` entry, newest first, with the date, a short title, plain-language items and the PR number once it's known;
+- update the `features` entry it touches (what it does, and how to use it), or add one for a new tab or capability.
+
+The page reads the file live, so the change shows on reload.
+
 ## Every agent starts with its eval
 
 Follow `grin-agents/skills/eval-first-agent/SKILL.md`. The naive baseline must fail the gate, and any prompt change re-runs the eval.

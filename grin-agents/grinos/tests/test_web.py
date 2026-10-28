@@ -336,3 +336,13 @@ def test_cases_over_time_and_adding_a_case_from_a_claim(app, monkeypatch, tmp_pa
     assert any(e["stage"] == "eval_case_added" for e in app["ledger"].entries())
     assert req(app, "/api/agent/verifier/cases", {"case": {"id": "bad", "kind": "judgment"}})[0] == 400
     assert req(app, "/api/agent/memo-writer/case_template")[0] == 404
+
+
+def test_home_page_has_the_guide_status_and_what_needs_you(app):
+    h = j(req(app, "/api/home"))
+    assert h["guide"]["intro"] and h["guide"]["whats_new"][0]["items"] and len(h["guide"]["features"]) >= 10
+    tabs = {f["tab"] for f in h["guide"]["features"] if f["tab"]}
+    assert tabs <= {"Home", "Desk", "Pending", "Coverage", "Agents", "Proposals", "Valuations", "Runs", "Ops", "Evals"}
+    assert {s["name"] for s in h["status"]} >= {"Ledger", "Temporal", "Worker", "Langfuse"}
+    assert next(s for s in h["status"] if s["name"] == "Ledger")["ok"]
+    assert any(n["label"] == "proposals to review" and n["tab"] == "Pending" for n in h["needs_you"])
