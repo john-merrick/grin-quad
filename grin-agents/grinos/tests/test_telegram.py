@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grinos import analyst, decide, telegram, verify, voice
+from grinos import analyst, decide, telegram, verify
 from grinos.desk import Desk
 from grinos.ledger import Ledger
 from grinos.pipeline import ingest
@@ -24,13 +24,10 @@ ME, BOT_ID = 42, 999
 
 class FakeAPI:
     def __init__(self, files=None):
-        self.sent, self.voices, self.files = [], [], files or {}
+        self.sent, self.files = [], files or {}
 
     def send_message(self, chat_id, text, reply_to=None):
         self.sent.append((chat_id, text))
-
-    def send_voice(self, chat_id, audio, caption=""):
-        self.voices.append((chat_id, audio, caption))
 
     def get_file(self, file_id):
         return {"file_path": file_id}
@@ -118,28 +115,11 @@ def test_approve_via_telegram_records_channel(ledger, monkeypatch):
     assert appr["payload"]["channel"] == "telegram" and appr["actor"]["name"] == "tg:42(isaac)"
 
 
-def test_voice_note_transcribed_answered_and_spoken(ledger, monkeypatch):
-    monkeypatch.setattr(voice, "stt", lambda audio, name: "what is the margin")
-    monkeypatch.setattr(voice, "tts", lambda text, v, fmt="mp3": b"OGG" + text.encode())
+def test_a_voice_note_gets_a_request_for_text(ledger):
     bot, api = _bot(ledger, FakeAPI({"f1": b"voice-bytes"}))
     bot.handle_update(_msg(voice={"file_id": "f1"}))
-    assert api.sent[0][1] == "🎙️ heard: what is the margin"
-    assert api.sent[1][1].startswith("🗂 Grin:")
-    assert len(api.voices) == 1 and api.voices[0][1].startswith(b"OGG")
-    inbound = [e for e in ledger.entries() if e["stage"] == "message" and e["actor"]["kind"] == "human"][-1]
-    assert ledger.get_blob(inbound["payload"]["audio_blob"]) == b"voice-bytes"
-    speech = [e for e in ledger.entries() if e["stage"] == "speech"][-1]
-    assert speech["payload"]["reply_hash"] and ledger.audit() == []
-
-
-def test_voice_without_voicestudio_falls_back_to_text(ledger, monkeypatch):
-    def down(*a, **k):
-        raise voice.VoiceUnavailable("no server")
-    monkeypatch.setattr(voice, "stt", down)
-    bot, api = _bot(ledger, FakeAPI({"f1": b"v"}))
-    bot.handle_update(_msg(voice={"file_id": "f1"}))
-    assert len(api.sent) == 1 and "VoiceStudio" in api.sent[0][1] and "text" in api.sent[0][1]
-    assert any(e["stage"] == "speech_failed" for e in ledger.entries())
+    assert len(api.sent) == 1 and "send it as text" in api.sent[0][1]
+    assert not any(e["stage"] in ("message", "speech") for e in ledger.entries())
 
 
 def test_document_ingest(ledger, monkeypatch):

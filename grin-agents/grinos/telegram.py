@@ -3,8 +3,7 @@ Telegram interface to the desk. Stdlib only.
 
   text           → Desk.handle (DMs: direct; groups: conference, only when @mentioned,
                    a /command, or a reply to the bot)
-  voice / audio  → blob store → VoiceStudio STT → Desk.handle(audio_blob=…) → text replies,
-                   plus a voice note per reply in the agent's voice (TTS) when VoiceStudio is up
+  voice / audio  → a reply asking for text (voice isn't supported)
   document       → caption "/ingest TICKER KIND PUBLISHED [AS_OF]" → pipeline.ingest in the background
 
 Security: only TELEGRAM_ALLOWED_USER_IDS are served. Anyone else is ignored silently, and
@@ -18,12 +17,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from grinos import voice
 from grinos.desk import COMPANIES_DIR, Desk
 from grinos.env import secret
 from grinos.ledger import Ledger
@@ -97,19 +94,6 @@ class TelegramAPI:
             params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
         return self._call("sendMessage", params)
 
-    def send_voice(self, chat_id: int, audio: bytes, caption: str = "") -> dict:
-        boundary = uuid.uuid4().hex
-        fields = {"chat_id": str(chat_id), "caption": caption[:1000]}
-        body = b"".join(
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
-            for k, v in fields.items())
-        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"voice\"; filename=\"reply.ogg\"\r\n"
-                 f"Content-Type: audio/ogg\r\n\r\n").encode() + audio + f"\r\n--{boundary}--\r\n".encode()
-        req = urllib.request.Request(f"{API}/bot{self.token}/sendVoice", data=body,
-                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return json.loads(r.read())["result"]
-
     def get_file(self, file_id: str) -> dict:
         return self._call("getFile", {"file_id": file_id})
 
@@ -166,7 +150,7 @@ class Bot:
         elif msg.get("voice") or msg.get("audio"):
             if group and not self._addressed(msg, msg.get("caption", "")):
                 return
-            self._voice(msg, name, chat_id, group)
+            self.api.send_message(chat_id, "Voice notes aren't supported: send it as text.", msg.get("message_id"))
         elif "text" in msg:
             text = msg["text"]
             if group and not self._addressed(msg, text):
@@ -192,38 +176,6 @@ class Bot:
             label = LABELS.get(r["agent"], f"{r['agent']}:")
             for part in split(f"{label} {r['text']}"):
                 self.api.send_message(chat_id, part, reply_to)
-
-    # --- voice ----------------------------------------------------------------
-
-    def _voice(self, msg: dict, name: str, chat_id: int, group: bool) -> None:
-        media = msg.get("voice") or msg.get("audio") or {}
-        audio = self.api.download(self.api.get_file(media["file_id"])["file_path"])
-        blob = self.ledger.put_blob(audio)
-        try:
-            transcript = voice.stt(audio, "voice.ogg")
-        except voice.VoiceUnavailable as exc:
-            self.ledger.append(f"telegram:{chat_id}", "speech_failed", SYSTEM,
-                               {"channel": "telegram", "audio_blob": blob, "error": str(exc)[:300]},
-                               refs=[f"blob:{blob}"])
-            self.api.send_message(chat_id, "⚙️ Voice notes need VoiceStudio running on the Mac "
-                                           "(http://127.0.0.1:3900). Your recording is saved; text messages work now.")
-            return
-        self.api.send_message(chat_id, f"🎙️ heard: {transcript}", msg.get("message_id"))
-        replies = self.desk.handle(transcript, user=name, channel="telegram", thread=str(chat_id),
-                                   audio_blob=blob, conference=group)
-        self._send_replies(chat_id, replies)
-        voices = voice.voice_map(self.ledger.root)
-        for r in replies:
-            try:
-                speech = voice.tts(r["text"], voices.get(r["agent"], "default"), fmt="opus")
-            except voice.VoiceUnavailable:
-                self.api.send_message(chat_id, "⚙️ (VoiceStudio unavailable for spoken replies; text above.)")
-                return
-            sblob = self.ledger.put_blob(speech)
-            self.ledger.append(f"telegram:{chat_id}", "speech", SYSTEM,
-                               {"channel": "telegram", "reply_hash": r.get("ledger_hash"), "agent": r["agent"],
-                                "audio_blob": sblob}, refs=[f"blob:{sblob}"])
-            self.api.send_voice(chat_id, speech, LABELS.get(r["agent"], r["agent"]))
 
     # --- documents ------------------------------------------------------------
 

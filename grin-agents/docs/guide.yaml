@@ -27,7 +27,7 @@ features:
   - id: desk
     tab: Desk
     title: "Talk to the orchestrator"
-    what: "One agent you talk to (here, in Telegram, or in the voice room). It starts work, asks the specialists, and answers in one voice."
+    what: "One agent you talk to (here or in Telegram). It starts work, asks the specialists, and answers in one voice."
     how:
       - "Ask in plain words: 'cover POOL', 'run the analyst on FAST', 'is the 13.5% growth number really in the release?'."
       - "Long work runs in the background on Temporal; you're messaged when it needs you or finishes."
@@ -121,6 +121,12 @@ commands:
   - {cmd: "grinos audit", what: "check the ledger is intact"}
 
 whats_new:
+  - date: "2026-11-03"
+    title: "Voice removed"
+    pr: null
+    items:
+      - "The voice room and Telegram voice notes are gone: they were too slow to be useful. Talk to the orchestrator by text here or in Telegram."
+      - "A voice note sent to the bot now gets a reply asking for text. VoiceStudio is no longer checked on this page."
   - date: "2026-10-29"
     title: "Home page"
     pr: 5
@@ -152,4 +158,4 @@ whats_new:
     pr: 1
     items:
       - "Evidence pipeline (extract → decide → verify) with a tamper-evident ledger, the research graph and /why."
-      - "FCFF valuation workflow from SEC XBRL; LongGamma capture to Notion; Telegram, dashboard and voice room."
+      - "FCFF valuation workflow from SEC XBRL; LongGamma capture to Notion; Telegram and the dashboard."

@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: The only agent Isaac talks to (Telegram, dashboard desk, voice room). Plans each message into work for the other agents (Temporal workflows), consults specialists, and replies. Never makes a decision that belongs to Isaac.
+description: The only agent Isaac talks to (Telegram, dashboard desk). Plans each message into work for the other agents (Temporal workflows), consults specialists, and replies. Never makes a decision that belongs to Isaac.
 tools: Read
 model: sonnet
 ---

@@ -1,12 +1,11 @@
 """
-Local dashboard + voice room over the ledger. Stdlib only.
+Local dashboard over the ledger. Stdlib only.
 
   http://127.0.0.1:<port>/       dashboard: pending approvals, runs, claim trails, proposals, evals, desk chat
-  http://127.0.0.1:<port>/room   voice room: push-to-talk → VoiceStudio STT → desk (conference) → TTS per agent
 
 Security: binds 127.0.0.1 only; rejects foreign Host headers (DNS rebinding); every POST needs the
 per-process session token embedded in the served pages (X-Grin-Token), so other websites can't
-drive approvals. Blobs are served only if a ledger message/speech entry references them.
+drive approvals.
 Every action is a ledger entry (approvals and verdicts via the same functions as the CLI).
 """
 import json
@@ -23,7 +22,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
-from grinos import coverage, longgamma, notion, review, runtime, sec, trace, valuation, voice
+from grinos import coverage, longgamma, notion, review, runtime, sec, trace, valuation
 from grinos.desk import COMPANIES_DIR, Desk
 from grinos.ledger import Ledger
 from grinos.pipeline import human_verdict
@@ -35,9 +34,7 @@ from grinos.xbrl import to_jsonable
 STATIC = Path(__file__).parent / "static"
 EVALS = Path(__file__).parents[2] / "evals"
 SHA = re.compile(r"^[0-9a-f]{64}$")
-MAX_BODY = 25 * 1024 * 1024      # audio uploads (/api/room/turn)
 MAX_JSON = 256 * 1024
-VOICE_ROOM = Actor(kind="system", name="voice-room", version="1")
 
 
 # --- read models (pure functions of the ledger) -----------------------------------------
@@ -153,14 +150,6 @@ def evals_view() -> list[dict]:
     return out
 
 
-def referenced_blobs(ledger: Ledger) -> set[str]:
-    refs = set()
-    for e in ledger.entries():
-        if e["stage"] in {"message", "speech"} and e["payload"].get("audio_blob"):
-            refs.add(e["payload"]["audio_blob"])
-    return refs
-
-
 # --- server --------------------------------------------------------------------------------
 
 class App:
@@ -192,7 +181,7 @@ def make_handler(app: App):
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-                             "media-src 'self' blob:; frame-ancestors 'none'")
+                             "frame-ancestors 'none'")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
@@ -207,7 +196,7 @@ def make_handler(app: App):
             port = cast(tuple, self.server.server_address)[1]
             return self.headers.get("Host", "") in {f"127.0.0.1:{port}", f"localhost:{port}"}
 
-        def _body(self, limit: int = MAX_BODY) -> bytes:
+        def _body(self, limit: int = MAX_JSON) -> bytes:
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -234,8 +223,6 @@ def make_handler(app: App):
             try:
                 if path in {"/", "/index.html"}:
                     return self._send(200, app.page("dashboard.html"), "text/html; charset=utf-8")
-                if path == "/room":
-                    return self._send(200, app.page("room.html"), "text/html; charset=utf-8")
                 if path == "/api/runs":
                     return self._json(runs_view(L))
                 if m := re.fullmatch(r"/api/run/([\w:.\-]+)", path):
@@ -313,13 +300,6 @@ def make_handler(app: App):
                                                                "metrics")} for r in rows[-400:]])
                 if path == "/api/evals":
                     return self._json(evals_view())
-                if path == "/api/voice":
-                    return self._json({"available": voice.health() is not None, "base": voice.BASE})
-                if m := re.fullmatch(r"/api/blob/([0-9a-f]+)", path):
-                    sha = m[1]
-                    if not SHA.match(sha) or sha not in referenced_blobs(L):
-                        return self._error(404, "no such audio")
-                    return self._send(200, L.get_blob(sha), "audio/mpeg")
                 return self._error(404, "not found")
             except KeyError as exc:
                 return self._error(404, str(exc).strip("'\""))
@@ -335,8 +315,6 @@ def make_handler(app: App):
             path = self.path.split("?", 1)[0]
             L = app.ledger
             try:
-                if path == "/api/room/turn":
-                    return self._room_turn()
                 data = self._json_body()
                 if path in {"/api/approve", "/api/reject"}:
                     pid, note = str(data.get("proposal_id", "")), str(data.get("note", "")).strip()
@@ -492,10 +470,9 @@ def make_handler(app: App):
                     text = str(data.get("text", "")).strip()
                     if not text:
                         raise ValueError("text is required")
-                    conference = bool(data.get("conference"))
                     with app.lock:
-                        replies = app.desk.handle(text, app.user, "room" if conference else "dashboard",
-                                                  thread="main", conference=conference)
+                        replies = app.desk.handle(text, app.user, "dashboard", thread="main",
+                                                  conference=bool(data.get("conference")))
                     return self._json({"replies": replies})
                 return self._error(404, "not found")
             except (ValueError, notion.NotPublishable) as exc:
@@ -503,41 +480,6 @@ def make_handler(app: App):
             except Exception as exc:
                 print(f"error on {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
                 return self._error(500, f"internal error ({type(exc).__name__}); see server log")
-
-        def _room_turn(self):
-            audio = self._body()
-            if not audio:
-                raise ValueError("no audio")
-            ctype = (self.headers.get("Content-Type") or "audio/webm").split(";")[0]
-            ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/mp4": "m4a",
-                   "audio/mpeg": "mp3"}.get(ctype, "webm")
-            try:
-                transcript = voice.stt(audio, f"turn.{ext}")
-            except voice.VoiceUnavailable as exc:
-                return self._error(503, str(exc), fallback="text",
-                                   hint="Start VoiceStudio (backend on port 3900) for voice; use text meanwhile.")
-            if not transcript:
-                return self._json({"transcript": "", "replies": []})
-            L = app.ledger
-            blob = L.put_blob(audio)
-            with app.lock:
-                replies = app.desk.handle(transcript, app.user, "room", thread="main", audio_blob=blob, conference=True)
-                voices, tts_ok = voice.voice_map(L.root), True
-                for r in replies:
-                    r["audio_url"] = None
-                    if not tts_ok:
-                        continue
-                    try:
-                        clip = voice.tts(r["text"], voices.get(r["agent"], "default"), fmt="mp3")
-                    except voice.VoiceUnavailable:
-                        tts_ok = False
-                        continue
-                    sha = L.put_blob(clip)
-                    L.append("room:main", "speech", VOICE_ROOM,
-                             {"reply_hash": r.get("ledger_hash"), "agent": r["agent"], "audio_blob": sha},
-                             refs=[f"blob:{sha}"])
-                    r["audio_url"] = f"/api/blob/{sha}"
-            return self._json({"transcript": transcript, "replies": replies, "tts": tts_ok})
 
     return Handler
 
@@ -563,7 +505,7 @@ def make_server(ledger: Ledger, port: int = 8765, model: str | None = None, desk
 def serve(ledger: Ledger, port: int = 8765, model: str | None = None) -> int:
     httpd, _ = make_server(ledger, port, model)
     host, bound = str(httpd.server_address[0]), httpd.server_port
-    print(f"Grin OS dashboard: http://{host}:{bound}/   voice room: http://{host}:{bound}/room", flush=True)
+    print(f"Grin OS dashboard: http://{host}:{bound}/", flush=True)
     print(f"ledger: {ledger.root}   (Ctrl-C to stop)", flush=True)
     try:
         httpd.serve_forever()

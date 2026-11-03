@@ -38,7 +38,6 @@ def _running(pattern: str) -> bool:
 
 
 def status(ledger: Ledger) -> list[dict]:
-    from grinos import voice
     problems = ledger.audit()
     return [
         {"name": "Ledger", "ok": not problems, "detail": "intact" if not problems else f"{len(problems)} problem(s): run grinos audit"},
@@ -46,7 +45,6 @@ def status(ledger: Ledger) -> list[dict]:
         {"name": "Worker", "ok": _running("grinos worker"), "detail": "runs the agents' work on Temporal"},
         {"name": "Telegram bot", "ok": _running("grinos telegram"), "detail": "talk to the orchestrator from your phone"},
         {"name": "Langfuse", "ok": _http("http://127.0.0.1:3300/api/public/health"), "detail": "full traces", "url": "http://127.0.0.1:3300"},
-        {"name": "VoiceStudio", "ok": voice.health() is not None, "detail": "voice notes and the voice room (optional)"},
     ]
 
 

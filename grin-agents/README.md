@@ -2,8 +2,8 @@
 
 An operating system for the valuation process.
 
-- **One counterpart.** You talk to one agent, the **orchestrator**, in Telegram, the dashboard or the voice
-  room. It assigns the work to the others.
+- **One counterpart.** You talk to one agent, the **orchestrator**, in Telegram or the dashboard. It
+  assigns the work to the others.
 - **Durable work.** Every agent call and long process runs as a **Temporal** workflow or activity, so the
   work survives restarts and you can watch it at `127.0.0.1:8233`.
 - **Verified evidence only.** Each piece of evidence is triaged by a decision model, then verified, before
@@ -83,7 +83,6 @@ V=../val-machine/.venv/bin/python          # every command below uses $V
 | Telegram (optional) | `TELEGRAM_BOT_TOKEN`, then pair from your own terminal: `$V -m grinos telegram-pair` (approve the 1Password prompt, then send the printed code to the bot) |
 | Temporal (recommended) | `$V -m pip install -r requirements.txt` (temporalio), `brew install temporal`, then `services/install.sh --temporal` (local dev server, UI `127.0.0.1:8233`, and `grinos worker`). Without it, work runs inline and the ledger records `execution: inline` |
 | Langfuse (optional) | `services/install.sh --langfuse` (docker compose, UI `127.0.0.1:3300`; the sign-in is in `services/langfuse/.env`). grinos reads the keys from that file. Local traces in `var/traces/` work without it |
-| Voice (optional) | Start [VoiceStudio](https://github.com/debpalash/VoiceStudio) on `127.0.0.1:3900` and create the voices listed under [What needs you](#what-needs-you) |
 
 The ledger key is created on first use at `~/.config/grinos/ledger.key`. Keep it out of synced folders.
 
@@ -316,13 +315,13 @@ $V -m grinos improve approve <pr_…> --note "…"   # writes agents/verifier.md
 
 ```bash
 $V -m grinos serve            # dashboard http://127.0.0.1:8765 (Pending, Runs, Trail, Proposals, Coverage,
-                              #   Valuations, Ops, Evals, Desk); voice room at /room
+                              #   Valuations, Ops, Evals, Desk)
 $V -m grinos telegram         # the bot; allowlisted users only (pair first, step 1)
 $V -m grinos worker           # the Temporal worker (every agent's task queue)
 services/install.sh [--temporal] [--langfuse]   # at login as LaunchAgents (--uninstall to remove)
 ```
 
-**Free text goes to the orchestrator,** in Telegram, the Desk tab and the voice room. It:
+**Free text goes to the orchestrator,** in Telegram and the Desk tab. It:
 - starts the work on Temporal: analysis, coverage, evals or an improvement round;
 - consults specialists, whose answers come back as "verifier reports: …";
 - tells you when a workflow needs you or finishes.
@@ -370,7 +369,7 @@ at an explicit `unsupported` outcome.
 
 Commands: [Running it, steps 3 and 6b](#3-smoke-test-offline-no-network-no-secrets).
 
-Telegram and the voice room: `/value POOL [DATE PRICE]`, `/valuation [run_id]`, `/vdecide …`. The
+Telegram and the Desk tab: `/value POOL [DATE PRICE]`, `/valuation [run_id]`, `/vdecide …`. The
 dashboard has a Valuations tab (read-only view; decisions need the session token).
 
 **Steps** (each a ledger entry, re-recorded only when its output changes): resolve (ticker → CIK,
@@ -456,7 +455,6 @@ out of synced folders.
 |---|---|
 | `NOTION_TOKEN` in `.env`, and the integration added to Valuation Log, Research Notes, Companies and Agent Registry | Only you can create a Notion integration. Until then `publish` stops at the outbox |
 | Telegram bot token and your user id in `.env` | from @BotFather and @userinfobot |
-| Install and start [VoiceStudio](https://github.com/debpalash/VoiceStudio), and create designed voices `grin-analyst`, `grin-verifier`, `grin-decision`, `grin-auditor`, `grin-extractor` | about 5 GB of models; AGPL-3.0. Without these voices, every agent uses the default voice |
 | `services/install.sh [--temporal] [--langfuse]` | changes your login items; `--langfuse` runs docker containers |
 | `$V -m pip install -r requirements.txt` | adds temporalio to the val-machine venv |
 | approving prompt promotions, then committing `agents/*.md` | a prompt change is a change to how an agent behaves |
@@ -466,7 +464,7 @@ out of synced folders.
 
 ```
 grinos/          the OS: ledger, schemas, rules, pipeline, decide, verify, extract, analyst,
-                 proposal_check, proposals, notion, desk, voice, telegram, web/, cli, graph,
+                 proposal_check, proposals, notion, desk, telegram, web/, cli, graph,
                  sec + xbrl + valuation + valuation_memo + narrative (the FCFF workflow),
                  review (the evidence pop-up), steps + drivers + coverage (the coverage workflow),
                  orchestrator, improve (the improvement loop), trace (tracing), runtime + temporal/ (Temporal)

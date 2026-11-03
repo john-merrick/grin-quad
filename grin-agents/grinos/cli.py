@@ -17,7 +17,7 @@ grinos — operate the evidence pipeline and inspect the audit trail.
   grinos registry [--push]         Agent Registry rows from agents/ + eval baselines
   grinos notion-check              read-only: token works, which LongGamma databases it can see
 
-  grinos serve [--port 8765]       dashboard + voice room at http://127.0.0.1:8765
+  grinos serve [--port 8765]       dashboard at http://127.0.0.1:8765
   grinos telegram                  Telegram bot (TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_IDS)
   grinos telegram-pair             one-time: allowlist yourself by sending the bot a code
 """
