@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Grin OS as macOS LaunchAgents: the dashboard/voice room and the Telegram bot start at
+# Install Grin OS as macOS LaunchAgents: the dashboard and the Telegram bot start at
 # login and restart if they crash. Logs: grin-agents/var/logs/. Undo with: services/install.sh --uninstall
 # Options: --temporal adds the local Temporal server and the grinos worker; --langfuse starts the local
 # Langfuse stack (docker) for traces.
@@ -95,7 +95,7 @@ fi
 
 plist com.grinos.dashboard serve --port 8765
 launchctl bootstrap "gui/$(id -u)" "$agents/com.grinos.dashboard.plist"
-echo "dashboard: http://127.0.0.1:8765  (voice room: /room)"
+echo "dashboard: http://127.0.0.1:8765"
 
 if grep -q '^TELEGRAM_BOT_TOKEN=.\+' "$here/.env" 2>/dev/null && grep -q '^TELEGRAM_ALLOWED_USER_IDS=.\+' "$here/.env"; then
   plist com.grinos.telegram telegram

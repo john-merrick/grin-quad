@@ -1,4 +1,4 @@
-"""Dashboard + voice room server: token guard, host guard, actions in the ledger, room turn, blob allowlist."""
+"""Dashboard server: token guard, host guard, actions in the ledger, source allowlist."""
 import json
 import threading
 import urllib.error
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grinos import analyst, decide, verify, voice
+from grinos import analyst, decide, verify
 from grinos.ledger import Ledger
 from grinos.pipeline import ingest
 from grinos.proposals import analyse
@@ -82,7 +82,7 @@ def test_binds_loopback_only(app):
 
 
 def test_pages_render_with_token(app):
-    for path in ("/", "/room"):
+    for path in ("/",):
         status, body, ctype = req(app, path)
         assert status == 200 and "text/html" in ctype
         assert app["token"].encode() in body and b"__GRIN_TOKEN__" not in body
@@ -143,45 +143,14 @@ def test_desk_endpoint(app):
     assert [r["agent"] for r in out["replies"]] == ["orchestrator"]
     assert "verifier reports: verifier: gross margin" in out["replies"][0]["text"]
     msgs = [e for e in app["ledger"].entries() if e["stage"] == "message"]
-    assert msgs[0]["payload"]["channel"] == "room" and msgs[0]["actor"]["name"] == "tester"
+    assert msgs[0]["payload"]["channel"] == "dashboard" and msgs[0]["actor"]["name"] == "tester"
 
 
-def test_room_turn_falls_back_when_voicestudio_down(app, monkeypatch):
-    def down(*a, **k):
-        raise voice.VoiceUnavailable("not reachable")
-    monkeypatch.setattr(voice, "stt", down)
-    status, body, _ = req(app, "/api/room/turn", raw=b"\x1aE\xdf\xa3webm", ctype="audio/webm")
-    assert status == 503 and json.loads(body)["fallback"] == "text"
-
-
-def test_room_turn_with_voice_and_blob_allowlist(app, monkeypatch):
-    monkeypatch.setattr(voice, "stt", lambda audio, filename="x", **k: "everyone, how is ACME?")
-    monkeypatch.setattr(voice, "tts", lambda text, v="default", fmt="mp3", **k: b"ID3fake-mp3-" + text.encode()[:20])
-    out = j(req(app, "/api/room/turn", raw=b"\x1aE\xdf\xa3webm", ctype="audio/webm"))
-    assert out["transcript"] == "everyone, how is ACME?"
-    assert len(out["replies"]) == 1 and all(r["audio_url"] for r in out["replies"])
-    status, body, ctype = req(app, out["replies"][0]["audio_url"])
-    assert status == 200 and body.startswith(b"ID3fake") and ctype == "audio/mpeg"
-
-    stages = [e["stage"] for e in app["ledger"].entries()]
-    assert stages.count("speech") == 1
-    inbound = next(e for e in app["ledger"].entries() if e["stage"] == "message" and e["actor"]["kind"] == "human")
-    assert inbound["payload"]["audio_blob"] and req(app, f"/api/blob/{inbound['payload']['audio_blob']}")[0] == 200
-
-    # The source document blob exists in the store but is not voice audio: never served.
-    src = next(e for e in app["ledger"].entries() if e["stage"] == "source")["payload"]["source"]["blob"]
-    assert req(app, f"/api/blob/{src}")[0] == 404
-    assert req(app, "/api/blob/../../etc")[0] == 404
-    assert app["ledger"].audit() == []
-
-
-def test_room_turn_without_tts_returns_text(app, monkeypatch):
-    monkeypatch.setattr(voice, "stt", lambda audio, filename="x", **k: "hello")
-    def down(*a, **k):
-        raise voice.VoiceUnavailable("tts down")
-    monkeypatch.setattr(voice, "tts", down)
-    out = j(req(app, "/api/room/turn", raw=b"webm", ctype="audio/webm"))
-    assert out["tts"] is False and all(r["audio_url"] is None for r in out["replies"])
+def test_voice_routes_are_gone(app):
+    assert req(app, "/room")[0] == 404 and req(app, "/api/voice")[0] == 404
+    assert req(app, "/api/room/turn", {})[0] == 404
+    blob = app["ledger"].put_blob(b"anything")
+    assert req(app, f"/api/blob/{blob}")[0] == 404
 
 
 def test_valuation_endpoints_read_without_advancing_and_decide_with_the_token(app):

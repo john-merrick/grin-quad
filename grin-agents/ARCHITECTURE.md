@@ -1,7 +1,7 @@
 # Grin OS — architecture
 
-An operating system for the valuation process: agents you can talk to (Telegram, voice,
-a multi-agent voice room), where **every piece of evidence is triaged, then verified, before
+An operating system for the valuation process: agents you can talk to (Telegram and the
+dashboard), where **every piece of evidence is triaged, then verified, before
 any analyst agent may use it**, and every step is auditable on disk. Notion receives only the
 finished, decision-ready outputs.
 
@@ -81,8 +81,8 @@ var/               runtime data, gitignored: store/blobs, ledger.jsonl
 | 2 | analyst + publish | claim extractor, mid-cycle analyst, proposal_check (engine impact), approval, Notion outbox/push, Agent Registry | done; analyst passes on Sonnet (fails on Haiku) |
 | 3 | runs dashboard | local web UI: pending, runs, trails, proposals, evals, desk chat; approve/reject/resolve/publish | done |
 | 4 | Telegram | one allowlisted bot, desk routing, group conference, /commands, document ingest | done; needs your bot token |
-| 5 | voice | VoiceStudio TTS/STT client, voice notes in Telegram, a voice per agent | done; needs VoiceStudio running |
-| 6 | voice room | browser push-to-talk room, agents answer in turn in their own voices, text fallback | done; needs VoiceStudio running |
+| 5 | voice | VoiceStudio TTS/STT client, voice notes in Telegram, a voice per agent | removed (2026-11-03): too slow to be useful |
+| 6 | voice room | browser push-to-talk room, agents answer in turn in their own voices, text fallback | removed (2026-11-03) |
 | 7 | hardening | security review fixes: keyed ledger, head anchor, append_if, injection fencing, command neutralising, CSP | done |
 | 8 | history + research graph | `tools/edgar.py` + `bulk_ingest.py` (3 years of POOL/FAST/GWW earnings releases); `grinos/graph.py`, a rebuildable SQLite projection of the ledger; `/why` | done |
 
@@ -151,5 +151,5 @@ Agreement allows for rounding in the less precise figure ("$1.8 billion" ≈ 1,8
 with any later contradictions; `/why <claim_id>`, `/why POOL revenue Q2 FY2026` and
 `/why POOL conflicts` answer the other directions.
 
-Voice and messaging are thin clients. They call the same pipeline and agents, and every turn
+Messaging is a thin client. They call the same pipeline and agents, and every turn
 is written to the ledger, so a call is as auditable as a CLI run.

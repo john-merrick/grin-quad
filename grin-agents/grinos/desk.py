@@ -1,5 +1,5 @@
 """
-The desk: one conversation layer for Telegram, the dashboard and the voice room.
+The desk: one conversation layer for Telegram and the dashboard.
 
   /commands   parsed deterministically. The only way to approve, reject, resolve or publish.
               LLMs never trigger actions.
@@ -95,19 +95,17 @@ class Desk:
     # --- entry point ----------------------------------------------------------------
 
     def handle(self, text: str, user: str, channel: str, thread: str = "main",
-               audio_blob: str | None = None, conference: bool = False) -> list[dict]:
+               conference: bool = False) -> list[dict]:
         with trace.span("desk turn", session_id=f"{channel}:{thread}", input=text,
                         metadata={"channel": channel, "user": user, "conference": conference}) as s:
-            replies = self._handle(text, user, channel, thread, audio_blob, conference)
+            replies = self._handle(text, user, channel, thread, conference)
             s.end(output=[{"agent": r.get("agent"), "text": (r.get("text") or "")[:500]} for r in replies])
             return replies
 
-    def _handle(self, text: str, user: str, channel: str, thread: str,
-                audio_blob: str | None, conference: bool) -> list[dict]:
+    def _handle(self, text: str, user: str, channel: str, thread: str, conference: bool) -> list[dict]:
         text = text.replace(WORD_JOINER, "").strip()   # a human pasting a suggested command still works
         inbound = self.ledger.append(f"{channel}:{thread}", "message", Actor(kind="human", name=user, version="-"),
-                                     {"channel": channel, "thread": thread, "text": text, "audio_blob": audio_blob},
-                                     refs=[f"blob:{audio_blob}"] if audio_blob else [])
+                                     {"channel": channel, "thread": thread, "text": text})
         if text.startswith("/"):
             return [self._command(text, user, channel, thread, inbound)]
         if self.orchestrated:

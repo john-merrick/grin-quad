@@ -1,6 +1,6 @@
 ---
 name: desk-router
-description: Routes a free-text message from the analyst (Telegram, dashboard or voice room) to the one to three Grin OS agents best placed to answer it.
+description: Routes a free-text message from the analyst (Telegram or dashboard) to the one to three Grin OS agents best placed to answer it.
 tools: Read
 model: haiku
 ---
