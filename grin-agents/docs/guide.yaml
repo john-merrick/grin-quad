@@ -123,7 +123,7 @@ commands:
 whats_new:
   - date: "2026-11-03"
     title: "Voice removed"
-    pr: null
+    pr: 6
     items:
       - "The voice room and Telegram voice notes are gone: they were too slow to be useful. Talk to the orchestrator by text here or in Telegram."
       - "A voice note sent to the bot now gets a reply asking for text. VoiceStudio is no longer checked on this page."
